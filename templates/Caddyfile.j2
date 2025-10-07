@@ -1,5 +1,8 @@
-template.apps.matthewcarroll.ca {
-    reverse_proxy template-app:80
+# This is a wildcard that will match any subdomain of apps.matthewcarroll.ca
+*.apps.matthewcarroll.ca {
+    # Caddy extracts the subdomain (e.g., "template") into the {labels.0} placeholder
+    # It will then reverse proxy to the container with that name (e.g., template-app:80)
+    reverse_proxy {labels.0}-app:80
 }
 
-# Add other services here later.
+# Add any other specific domains or static sites here if needed
