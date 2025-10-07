@@ -1,0 +1,22 @@
+version: "3.8"
+
+services:
+  caddy:
+    image: caddy:2-alpine
+    restart: unless-stopped
+    ports:
+      - "80:80"
+      - "443:443"
+    volumes:
+      - /opt/docker/Caddyfile:/etc/caddy/Caddyfile
+      - caddy_data:/data
+      - caddy_config:/config
+
+  # We will add our first app here later.
+  # my-first-app:
+  #   image: your-dockerhub-username/my-first-app:latest
+  #   restart: unless-stopped
+
+volumes:
+  caddy_data:
+  caddy_config:
