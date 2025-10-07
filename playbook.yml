@@ -17,6 +17,7 @@
           - gnupg
           - software-properties-common
           - python3-pip
+          - google-cloud-sdk # Needed for gcloud command
         state: present
 
     - name: Add Docker GPG key
@@ -56,6 +57,9 @@
       template:
         src: templates/docker-compose.yml.j2
         dest: /opt/docker/docker-compose.yml
+
+    - name: Configure Docker to use Google Cloud credentials
+      command: gcloud auth configure-docker us-central1-docker.pkg.dev --quiet
 
     - name: Start services with Docker Compose
       community.docker.docker_compose_v2:

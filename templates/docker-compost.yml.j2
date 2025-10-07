@@ -12,10 +12,10 @@ services:
       - caddy_data:/data
       - caddy_config:/config
 
-  # We will add our first app here later.
-  # my-first-app:
-  #   image: your-dockerhub-username/my-first-app:latest
-  #   restart: unless-stopped
+  template-app:
+    # This now pulls from your private Artifact Registry
+    image: us-central1-docker.pkg.dev/{{ gcp_project_id }}/app-images/gcp-service-template:latest
+    restart: unless-stopped
 
 volumes:
   caddy_data:
