@@ -102,3 +102,13 @@
         state: present
         pull: always
         recreate: always
+
+    - name: Prune unused Docker images
+      community.docker.docker_prune:
+        images: yes
+        images_filters:
+          dangling: false # Prunes all unused images, not just dangling ones
+
+    - name: Prune unused Docker volumes
+      community.docker.docker_prune:
+        volumes: yes
