@@ -1,0 +1,187 @@
+name: Reusable Build and Deploy
+
+on:
+  workflow_call:
+    inputs:
+      appname:
+        required: true
+        type: string
+    secrets:
+      GCP_WORKLOAD_IDENTITY_PROVIDER:
+        required: true
+      GCP_SERVICE_ACCOUNT:
+        required: true
+      GCP_PROJECT_ID:
+        required: true
+      CLOUDFLARE_ZONE_ID:
+        required: true
+      CLOUDFLARE_EMAIL:
+        required: true
+      CLOUDFLARE_API_TOKEN:
+        required: true
+      ANSIBLE_SSH_PRIVATE_KEY:
+        required: true
+      GH_PAT:
+        required: true
+      ANSIBLE_VAULT_PASSWORD:
+        required: true
+
+env:
+  APPNAME: ${{ inputs.appname }}
+
+jobs:
+  build:
+    runs-on: ubuntu-latest
+    permissions:
+      contents: 'read'
+      id-token: 'write'
+    steps:
+      - name: Checkout code
+        uses: actions/checkout@v4
+      - name: Authenticate to Google Cloud
+        uses: 'google-github-actions/auth@v2'
+        with:
+          workload_identity_provider: '${{ secrets.GCP_WORKLOAD_IDENTITY_PROVIDER }}'
+          service_account: '${{ secrets.GCP_SERVICE_ACCOUNT }}'
+      - name: Configure Docker for Artifact Registry
+        run: gcloud auth configure-docker us-central1-docker.pkg.dev --quiet
+      - name: Set up Docker Buildx
+        uses: docker/setup-buildx-action@v3
+      - name: Build and push Docker image
+        uses: docker/build-push-action@v5
+        with:
+          context: .
+          push: true
+          tags: us-central1-docker.pkg.dev/${{ secrets.GCP_PROJECT_ID }}/app-images/${{ env.APPNAME }}:latest
+
+  provision-hostname:
+    runs-on: ubuntu-latest
+    needs: build
+    outputs:
+      hostname_exists: ${{ steps.check_hostname.outputs.exists }}
+    steps:
+      - name: Check if Custom Hostname exists
+        id: check_hostname
+        run: |
+          HOSTNAME="${{ env.APPNAME }}.apps.matthewcarroll.ca"
+          response=$(curl -s -X GET "https://api.cloudflare.com/client/v4/zones/${{ secrets.CLOUDFLARE_ZONE_ID }}/custom_hostnames?hostname=$HOSTNAME" \
+            -H "X-Auth-Email: ${{ secrets.CLOUDFLARE_EMAIL }}" \
+            -H "Authorization: Bearer ${{ secrets.CLOUDFLARE_API_TOKEN }}")
+          
+          if [ "$(echo $response | jq '.result | length')" -eq 0 ]; then
+            echo "Hostname does not exist. Starting creation process."
+            # Use GITHUB_OUTPUT to set an output for this step
+            echo "exists=false" >> $GITHUB_OUTPUT
+          else
+            echo "Hostname already exists."
+            echo "exists=true" >> $GITHUB_OUTPUT
+          fi
+
+      - name: Create Custom Hostname and Validation Records
+        if: steps.check_hostname.outputs.exists == 'false'
+        run: |
+          HOSTNAME="${{ env.APPNAME }}.apps.matthewcarroll.ca"
+          
+          # DEFINE THE PAYLOAD IN A SEPARATE VARIABLE FOR DEBUGGING
+          JSON_PAYLOAD="{\"hostname\":\"$HOSTNAME\",\"ssl\":{\"method\":\"txt\",\"type\":\"dv\"}}"
+          
+          # LOG THE PAYLOAD
+          echo "Attempting to send JSON payload:"
+          echo $JSON_PAYLOAD
+          
+          # Use --data-binary to ensure the JSON payload is sent literally.
+          create_response=$(curl -s -X POST "https://api.cloudflare.com/client/v4/zones/${{ secrets.CLOUDFLARE_ZONE_ID }}/custom_hostnames" \
+            -H "X-Auth-Email: ${{ secrets.CLOUDFLARE_EMAIL }}" \
+            -H "Authorization: Bearer ${{ secrets.CLOUDFLARE_API_TOKEN }}" \
+            -H "Content-Type: application/json" \
+            --data-binary "$JSON_PAYLOAD")
+          
+          # Check for API success and print error if failed
+          if ! (echo "$create_response" | jq -e '.success == true' > /dev/null); then
+            echo "Cloudflare API Error during Hostname Creation:"
+            echo "$create_response"
+            exit 1
+          fi
+
+          hostname_id=$(echo $create_response | jq -r '.result.id')
+          echo "Created hostname with ID: $hostname_id"
+          
+          # Give Cloudflare a moment to provision the validation records
+          sleep 10 
+          
+          # Get the full details, including ownership_verification and ssl.validation_records
+          details_response=$(curl -s -X GET "https://api.cloudflare.com/client/v4/zones/${{ secrets.CLOUDFLARE_ZONE_ID }}/custom_hostnames/${hostname_id}" \
+            -H "X-Auth-Email: ${{ secrets.CLOUDFLARE_EMAIL }}" \
+            -H "Authorization: Bearer ${{ secrets.CLOUDFLARE_API_TOKEN }}")
+
+          # 1. Add Ownership Verification TXT Record (_cf-custom-hostname)
+          preval_name=$(echo $details_response | jq -r '.result.ownership_verification.name')
+          preval_value=$(echo $details_response | jq -r '.result.ownership_verification.value')
+          echo "Adding Ownership Verification TXT record: $preval_name"
+          curl -s -X POST "https://api.cloudflare.com/client/v4/zones/${{ secrets.CLOUDFLARE_ZONE_ID }}/dns_records" \
+            -H "X-Auth-Email: ${{ secrets.CLOUDFLARE_EMAIL }}" \
+            -H "Authorization: Bearer ${{ secrets.CLOUDFLARE_API_TOKEN }}" \
+            --data '{"type":"TXT","name":"'"$preval_name"'","content":"'"$preval_value"'","ttl":3600}'
+
+          # 2. Add Certificate Validation TXT Record (_acme-challenge)
+          # Note: Assumes index 0 for non-wildcard hostnames. Wildcards require more complex logic.
+          certval_name=$(echo $details_response | jq -r '.result.ssl.validation_records[0].txt_name')
+          certval_value=$(echo $details_response | jq -r '.result.ssl.validation_records[0].txt_value') 
+          echo "Adding Certificate Validation TXT record: $certval_name"
+          curl -s -X POST "https://api.cloudflare.com/client/v4/zones/${{ secrets.CLOUDFLARE_ZONE_ID }}/dns_records" \
+            -H "X-Auth-Email: ${{ secrets.CLOUDFLARE_EMAIL }}" \
+            -H "Authorization: Bearer ${{ secrets.CLOUDFLARE_API_TOKEN }}" \
+            --data '{"type":"TXT","name":"'"$certval_name"'","content":"'"$certval_value"'"}'
+
+      - name: Wait for Hostname to become Active
+        if: steps.check_hostname.outputs.exists == 'false'
+        run: |
+          HOSTNAME="${{ env.APPNAME }}.apps.matthewcarroll.ca"
+          echo "Waiting for hostname to become active (Max 5 minutes)..."
+          for i in {1..30}; do
+            status=$(curl -s -X GET "https://api.cloudflare.com/client/v4/zones/${{ secrets.CLOUDFLARE_ZONE_ID }}/custom_hostnames?hostname=$HOSTNAME" \
+              -H "X-Auth-Email: ${{ secrets.CLOUDFLARE_EMAIL }}" \
+              -H "Authorization: Bearer ${{ secrets.CLOUDFLARE_API_TOKEN }}" | jq -r '.result[0].status')
+            
+            if [ "$status" == "active" ]; then
+              echo "Hostname is active!"
+              exit 0
+            fi
+            echo "Current status: $status. Waiting 10 seconds (Attempt $i of 30)..."
+            sleep 10
+          done
+          echo "Hostname did not become active in time."
+          exit 1
+
+  deploy:
+    needs: provision-hostname
+    runs-on: ubuntu-latest
+    steps:
+      - name: Checkout service repo
+        uses: actions/checkout@v4
+      - name: Generate compose.yml from template
+        run: sed "s/__APP_NAME__/${{ env.APPNAME }}/g" compose.yml.template > ${{ env.APPNAME }}.yml
+      - name: Copy compose config to server using native scp
+        run: |
+          echo "${{ secrets.ANSIBLE_SSH_PRIVATE_KEY }}" > deploy_key
+          chmod 600 deploy_key
+          scp -o StrictHostKeyChecking=no -i ./deploy_key \
+            ${{ env.APPNAME }}.yml \
+            dev@35.208.204.183:/home/dev/
+      - name: Checkout ansible config repo
+        uses: actions/checkout@v4
+        with:
+          repository: mfcarroll/gcp-server-config
+          token: ${{ secrets.GH_PAT }}
+          path: ansible-config
+      - name: Install Ansible and Run Playbook
+        run: |
+          python3 -m pip install ansible
+          echo "${{ secrets.ANSIBLE_SSH_PRIVATE_KEY }}" > ansible_ssh_key
+          chmod 600 ansible_ssh_key
+          ansible-playbook \
+            -i ./ansible-config/inventory \
+            ./ansible-config/playbook.yml \
+            --private-key ./ansible_ssh_key \
+            --vault-password-file <(echo ${{ secrets.ANSIBLE_VAULT_PASSWORD }}) \
+            --extra-vars "app_name=${{ env.APPNAME }} ansible_ssh_private_key_file=./ansible_ssh_key"
