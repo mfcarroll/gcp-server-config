@@ -83,6 +83,12 @@
         dest: /opt/docker/Caddyfile
       notify: Restart Docker Compose services
 
+    - name: Copy main Docker Compose file to server
+      template:
+        src: templates/docker-compose.yml.j2
+        dest: /opt/docker/compose.yml
+      notify: Restart Docker Compose services
+
     - name: Move application compose file into place
       copy:
         src: "/home/dev/{{ app_name }}.yml"
