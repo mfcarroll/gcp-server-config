@@ -2,6 +2,9 @@
   hosts: servers
   become: yes # Run commands as root (sudo)
 
+  vars_files:
+    - vars/secrets.yml
+
   tasks:
     - name: Update apt cache
       apt:
@@ -17,7 +20,7 @@
           - gnupg
           - software-properties-common
           - python3-pip
-          - google-cloud-sdk # Needed for gcloud command
+          - google-cloud-sdk
         state: present
 
     - name: Add Docker GPG key
@@ -48,15 +51,37 @@
         state: directory
         mode: '0755'
 
+    - name: Copy Caddy Dockerfile to server
+      copy:
+        src: caddy
+        dest: /opt/docker/
+      notify: Restart Docker Compose services
+
+    - name: Copy Cloudflare Origin Certificate
+      copy:
+        content: "{{ cloudflare_origin_cert }}"
+        dest: /opt/docker/caddy/cert.pem
+        mode: '0644'
+      notify: Restart Docker Compose services
+
+    - name: Copy Cloudflare Origin Key
+      copy:
+        content: "{{ cloudflare_origin_key }}"
+        dest: /opt/docker/caddy/key.pem
+        mode: '0600' # Private key should be more restrictive
+      notify: Restart Docker Compose services
+
     - name: Copy Caddyfile to server
       template:
         src: templates/Caddyfile.j2
         dest: /opt/docker/Caddyfile
+      notify: Restart Docker Compose services
 
     - name: Copy docker-compose file to server
       template:
         src: templates/docker-compose.yml.j2
         dest: /opt/docker/docker-compose.yml
+      notify: Restart Docker Compose services
 
     - name: Configure Docker to use Google Cloud credentials
       command: gcloud auth configure-docker us-central1-docker.pkg.dev --quiet
@@ -65,3 +90,11 @@
       community.docker.docker_compose_v2:
         project_src: /opt/docker
         state: present
+        pull: always
+
+  handlers:
+    - name: Restart Docker Compose services
+      community.docker.docker_compose_v2:
+        project_src: /opt/docker
+        state: present
+        recreate: always
