@@ -17,6 +17,10 @@ services:
     image: us-central1-docker.pkg.dev/{{ gcp_project_id }}/app-images/gcp-service-template:latest
     restart: unless-stopped
 
+  meow:
+    image: us-central1-docker.pkg.dev/{{ gcp_project_id }}/app-images/meow:latest
+    restart: unless-stopped
+
 volumes:
   caddy_data:
   caddy_config:
