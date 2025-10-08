@@ -89,6 +89,11 @@
         dest: /opt/docker/compose.yml
       notify: Restart Docker Compose services
 
+    - name: Ensure old docker-compose.yml file is removed
+      file:
+        path: /opt/docker/docker-compose.yml
+        state: absent
+
     - name: Move application compose file into place
       copy:
         src: "/home/dev/{{ app_name }}.yml"
@@ -102,15 +107,10 @@
     - name: Configure Docker to use Google Cloud credentials
       command: gcloud auth configure-docker us-central1-docker.pkg.dev --quiet
 
-    - name: Start services with Docker Compose
-      community.docker.docker_compose_v2:
-        project_src: /opt/docker
-        state: present
-        pull: always
-
   handlers:
     - name: Restart Docker Compose services
       community.docker.docker_compose_v2:
         project_src: /opt/docker
         state: present
+        pull: always
         recreate: always
