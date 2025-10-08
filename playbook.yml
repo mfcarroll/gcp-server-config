@@ -105,7 +105,7 @@
     - name: Run all services with Docker Compose
       community.docker.docker_compose_v2:
         project_src: /opt/docker
-        compose: "{{ ['/opt/docker/compose.yml'] + (service_files.files | map(attribute='path') | list) }}"
+        files: "{{ ['compose.yml'] + (service_files.files | map(attribute='path') | list) }}"
         state: present
         pull: always
         recreate: always
