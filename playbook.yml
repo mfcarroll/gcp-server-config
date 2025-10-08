@@ -108,7 +108,6 @@
         files: "{{ ['compose.yml'] + (service_files.files | map(attribute='path') | list) }}"
         state: present
         pull: always
-        recreate: always
 
     - name: Prune unused Docker images
       community.docker.docker_prune:
