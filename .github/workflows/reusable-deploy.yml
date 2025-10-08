@@ -38,15 +38,19 @@ jobs:
     steps:
       - name: Checkout code
         uses: actions/checkout@v4
+
       - name: Authenticate to Google Cloud
         uses: 'google-github-actions/auth@v2'
         with:
           workload_identity_provider: '${{ secrets.GCP_WORKLOAD_IDENTITY_PROVIDER }}'
           service_account: '${{ secrets.GCP_SERVICE_ACCOUNT }}'
+
       - name: Configure Docker for Artifact Registry
         run: gcloud auth configure-docker us-central1-docker.pkg.dev --quiet
+
       - name: Set up Docker Buildx
         uses: docker/setup-buildx-action@v3
+
       - name: Build and push Docker image
         uses: docker/build-push-action@v5
         with:
@@ -159,8 +163,10 @@ jobs:
     steps:
       - name: Checkout service repo
         uses: actions/checkout@v4
+
       - name: Generate compose.yml from template
         run: sed "s/__APP_NAME__/${{ env.APPNAME }}/g" compose.yml.template > ${{ env.APPNAME }}.yml
+
       - name: Copy compose config to server using native scp
         run: |
           echo "${{ secrets.ANSIBLE_SSH_PRIVATE_KEY }}" > deploy_key
@@ -168,12 +174,22 @@ jobs:
           scp -o StrictHostKeyChecking=no -i ./deploy_key \
             ${{ env.APPNAME }}.yml \
             dev@35.208.204.183:/home/dev/
+
       - name: Checkout ansible config repo
         uses: actions/checkout@v4
         with:
           repository: mfcarroll/gcp-server-config
           token: ${{ secrets.GH_PAT }}
           path: ansible-config
+
+      - name: Cache pip
+        uses: actions/cache@v3
+        with:
+          path: ~/.cache/pip
+          key: ${{ runner.os }}-pip-${{ hashFiles('**/requirements.txt') }} # A generic key, as we don't have a requirements file
+          restore-keys: |
+            ${{ runner.os }}-pip-
+
       - name: Install Ansible and Run Playbook
         run: |
           python3 -m pip install ansible
