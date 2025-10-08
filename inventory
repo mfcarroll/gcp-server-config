@@ -1,8 +1,10 @@
 [servers]
-app-server-1 ansible_host=35.208.204.183
+# The host is now defined by a variable passed from the CI/CD pipeline
+app-server-1 ansible_host={{ server_ip }}
 
 [servers:vars]
 ansible_user=dev
 ansible_host_key_checking=false
+# This local key path is a fallback for manual runs
 ansible_ssh_private_key_file=~/.ssh/id_ed25519_gcp
-gcp_project_id=matthewc
+gcp_project_id={{ gcp_project_id }}

@@ -1,4 +1,8 @@
-*.apps.matthewcarroll.ca {
+*.{{ domain_name }} {
     tls /etc/caddy/cert.pem /etc/caddy/key.pem
-    reverse_proxy {http.request.host.labels.3}-app:80
+
+    @appname expression host.split('.')[0] != '*'
+    reverse_proxy @appname {
+        to "{host.split('.')[0]}-app:80"
+    }
 }
