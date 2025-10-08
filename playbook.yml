@@ -1,6 +1,6 @@
 - name: Configure App Server
   hosts: servers
-  become: yes # Run commands as root (sudo)
+  become: yes
 
   vars_files:
     - vars/secrets.yml
@@ -83,10 +83,14 @@
         dest: /opt/docker/Caddyfile
       notify: Restart Docker Compose services
 
-    - name: Copy docker-compose file to server
-      template:
-        src: templates/docker-compose.yml.j2
-        dest: /opt/docker/docker-compose.yml
+    - name: Move application compose file into place
+      copy:
+        src: "/home/dev/{{ app_name }}.yml"
+        dest: "/opt/docker/services/{{ app_name }}.yml"
+        owner: root
+        group: root
+        mode: '0644'
+        remote_src: yes
       notify: Restart Docker Compose services
 
     - name: Configure Docker to use Google Cloud credentials
