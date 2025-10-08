@@ -96,9 +96,16 @@
     - name: Configure Docker to use Google Cloud credentials
       command: gcloud auth configure-docker us-central1-docker.pkg.dev --quiet
 
+    - name: Find all individual service compose files
+      find:
+        paths: /opt/docker/services
+        patterns: "*.yml"
+      register: service_files
+
     - name: Run all services with Docker Compose
       community.docker.docker_compose_v2:
         project_src: /opt/docker
+        compose: "{{ ['/opt/docker/compose.yml'] + (service_files.files | map(attribute='path') | list) }}"
         state: present
         pull: always
         recreate: always
@@ -107,7 +114,7 @@
       community.docker.docker_prune:
         images: yes
         images_filters:
-          dangling: false # Prunes all unused images, not just dangling ones
+          dangling: false
 
     - name: Prune unused Docker volumes
       community.docker.docker_prune:

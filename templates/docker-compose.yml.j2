@@ -1,8 +1,5 @@
-# Top-level compose file includes all the service configurations
-# from the services directory
-
-include:
-  - "services/*.yml"
+# Top-level compose file for shared services.
+# Individual application services are passed in by Ansible.
 
 services:
   caddy:
