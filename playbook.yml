@@ -51,6 +51,12 @@
         state: directory
         mode: '0755'
 
+    - name: Create the individual services config directory
+      file:
+        path: /opt/docker/services
+        state: directory
+        mode: '0755'
+
     - name: Copy Caddy Dockerfile to server
       copy:
         src: caddy
@@ -68,7 +74,7 @@
       copy:
         content: "{{ cloudflare_origin_key }}"
         dest: /opt/docker/caddy/key.pem
-        mode: '0600' # Private key should be more restrictive
+        mode: '0600'
       notify: Restart Docker Compose services
 
     - name: Copy Caddyfile to server

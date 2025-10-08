@@ -1,3 +1,9 @@
+# Top-level compose file includes all the service configurations
+# from the services directory
+
+include:
+  - "services/*.yml"
+
 services:
   caddy:
     build: /opt/docker/caddy
@@ -12,14 +18,6 @@ services:
       - /opt/docker/caddy/key.pem:/etc/caddy/key.pem
       - caddy_data:/data
       - caddy_config:/config
-
-  template-app:
-    image: us-central1-docker.pkg.dev/{{ gcp_project_id }}/app-images/gcp-service-template:latest
-    restart: unless-stopped
-
-  meow:
-    image: us-central1-docker.pkg.dev/{{ gcp_project_id }}/app-images/meow:latest
-    restart: unless-stopped
 
 volumes:
   caddy_data:
