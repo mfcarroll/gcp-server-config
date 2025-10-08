@@ -12,7 +12,50 @@
         cache_valid_time: 3600
 
     - name: Install required system packages
-      # ... (all package installation tasks) ...
+      apt:
+        name:
+          - apt-transport-https
+          - ca-certificates
+          - curl
+          - gnupg
+          - software-properties-common
+          - python3-pip
+          - google-cloud-sdk
+        state: present
+
+    - name: Add Docker GPG key
+      get_url:
+        url: https://download.docker.com/linux/debian/gpg
+        dest: /etc/apt/keyrings/docker.asc
+        mode: '0644'
+        force: yes
+
+    - name: Add Docker repository
+      apt_repository:
+        repo: "deb [arch=amd64 signed-by=/etc/apt/keyrings/docker.asc] https://download.docker.com/linux/debian {{ ansible_distribution_release }} stable"
+        state: present
+
+    - name: Install Docker
+      apt:
+        name:
+          - docker-ce
+          - docker-ce-cli
+          - containerd.io
+          - docker-buildx-plugin
+          - docker-compose-plugin
+        state: present
+
+    - name: Create the docker services directory
+      file:
+        path: /opt/docker
+        state: directory
+        mode: '0755'
+
+    - name: Create the individual services config directory
+      file:
+        path: /opt/docker/services
+        state: directory
+        mode: '0755'
 
     - name: Copy Caddy Dockerfile to server
       copy:
@@ -40,11 +83,6 @@
       template:
         src: templates/docker-compose.yml.j2
         dest: /opt/docker/compose.yml
-
-    - name: Ensure old docker-compose.yml file is removed
-      file:
-        path: /opt/docker/docker-compose.yml
-        state: absent
 
     - name: Move application compose file into place
       copy:
