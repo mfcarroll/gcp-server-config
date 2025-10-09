@@ -73,78 +73,23 @@ jobs:
     runs-on: ubuntu-latest
     needs: build
     steps:
-      - name: Check if Custom Hostname exists
-        id: check_hostname
+      - name: Checkout ansible config repo # We need to check out the repo to access the script
+        uses: actions/checkout@v4
+        with:
+          repository: ${{ github.repository_owner }}/gcp-server-config
+          token: ${{ secrets.GH_PAT }}
+
+      - name: Run hostname provisioning script
+        # This step executes the script and provides all secrets and inputs as environment variables
+        env:
+          APPNAME: ${{ inputs.appname }}
+          DOMAIN_NAME: ${{ secrets.DOMAIN_NAME }}
+          CLOUDFLARE_ZONE_ID: ${{ secrets.CLOUDFLARE_ZONE_ID }}
+          CLOUDFLARE_EMAIL: ${{ secrets.CLOUDFLARE_EMAIL }}
+          CLOUDFLARE_API_TOKEN: ${{ secrets.CLOUDFLARE_API_TOKEN }}
         run: |
-          HOSTNAME="${{ env.APPNAME }}.${{ secrets.DOMAIN_NAME }}"
-          response=$(curl -s -X GET "https://api.cloudflare.com/client/v4/zones/${{ secrets.CLOUDFLARE_ZONE_ID }}/custom_hostnames?hostname=$HOSTNAME" \
-            -H "X-Auth-Email: ${{ secrets.CLOUDFLARE_EMAIL }}" \
-            -H "Authorization: Bearer ${{ secrets.CLOUDFLARE_API_TOKEN }}")
-          
-          if [ "$(echo $response | jq '.result | length')" -eq 0 ]; then
-            echo "exists=false" >> $GITHUB_OUTPUT
-          else
-            echo "exists=true" >> $GITHUB_OUTPUT
-          fi
-
-      - name: Create Custom Hostname and Validation Records
-        if: steps.check_hostname.outputs.exists == 'false'
-        run: |
-          HOSTNAME="${{ env.APPNAME }}.${{ secrets.DOMAIN_NAME }}"
-          JSON_PAYLOAD="{\"hostname\":\"$HOSTNAME\",\"ssl\":{\"method\":\"txt\",\"type\":\"dv\"}}"
-          
-          create_response=$(curl -s -X POST "https://api.cloudflare.com/client/v4/zones/${{ secrets.CLOUDFLARE_ZONE_ID }}/custom_hostnames" \
-            -H "X-Auth-Email: ${{ secrets.CLOUDFLARE_EMAIL }}" \
-            -H "Authorization: Bearer ${{ secrets.CLOUDFLARE_API_TOKEN }}" \
-            -H "Content-Type: application/json" \
-            --data-binary "$JSON_PAYLOAD")
-          
-          if ! (echo "$create_response" | jq -e '.success == true' > /dev/null); then
-            echo "Cloudflare API Error during Hostname Creation:"
-            echo "$create_response"
-            exit 1
-          fi
-
-          hostname_id=$(echo $create_response | jq -r '.result.id')
-          sleep 10
-          
-          details_response=$(curl -s -X GET "https://api.cloudflare.com/client/v4/zones/${{ secrets.CLOUDFLARE_ZONE_ID }}/custom_hostnames/${hostname_id}" \
-            -H "X-Auth-Email: ${{ secrets.CLOUDFLARE_EMAIL }}" \
-            -H "Authorization: Bearer ${{ secrets.CLOUDFLARE_API_TOKEN }}")
-
-          preval_name=$(echo $details_response | jq -r '.result.ownership_verification.name')
-          preval_value=$(echo $details_response | jq -r '.result.ownership_verification.value')
-          curl -s -X POST "https://api.cloudflare.com/client/v4/zones/${{ secrets.CLOUDFLARE_ZONE_ID }}/dns_records" \
-            -H "X-Auth-Email: ${{ secrets.CLOUDFLARE_EMAIL }}" \
-            -H "Authorization: Bearer ${{ secrets.CLOUDFLARE_API_TOKEN }}" \
-            --data '{"type":"TXT","name":"'"$preval_name"'","content":"'"$preval_value"'","ttl":3600}'
-
-          certval_name=$(echo $details_response | jq -r '.result.ssl.validation_records[0].txt_name')
-          certval_value=$(echo $details_response | jq -r '.result.ssl.validation_records[0].txt_value')
-          curl -s -X POST "https://api.cloudflare.com/client/v4/zones/${{ secrets.CLOUDFLARE_ZONE_ID }}/dns_records" \
-            -H "X-Auth-Email: ${{ secrets.CLOUDFLARE_EMAIL }}" \
-            -H "Authorization: Bearer ${{ secrets.CLOUDFLARE_API_TOKEN }}" \
-            --data '{"type":"TXT","name":"'"$certval_name"'","content":"'"$certval_value"'"}'
-
-      - name: Wait for Hostname to become Active
-        if: steps.check_hostname.outputs.exists == 'false'
-        run: |
-          HOSTNAME="${{ env.APPNAME }}.${{ secrets.DOMAIN_NAME }}"
-          echo "Waiting for hostname to become active (Max 5 minutes)..."
-          for i in {1..30}; do
-            status=$(curl -s -X GET "https://api.cloudflare.com/client/v4/zones/${{ secrets.CLOUDFLARE_ZONE_ID }}/custom_hostnames?hostname=$HOSTNAME" \
-              -H "X-Auth-Email: ${{ secrets.CLOUDFLARE_EMAIL }}" \
-              -H "Authorization: Bearer ${{ secrets.CLOUDFLARE_API_TOKEN }}" | jq -r '.result[0].status')
-            
-            if [ "$status" == "active" ]; then
-              echo "Hostname is active!"
-              exit 0
-            fi
-            echo "Current status: $status. Waiting 10 seconds (Attempt $i of 30)..."
-            sleep 10
-          done
-          echo "Hostname did not become active in time."
-          exit 1
+          chmod +x ./.github/scripts/provision-hostname.sh
+          ./.github/scripts/provision-hostname.sh
 
   deploy:
     needs: provision-hostname
@@ -181,25 +126,14 @@ jobs:
 
       - name: Install Ansible and Run Playbook
         run: |
-          # 1. Install Ansible
           python3 -m pip install ansible
-
-          # 2. Save the private key to a file
           echo "${{ secrets.ANSIBLE_SSH_PRIVATE_KEY }}" > ansible_ssh_key
           chmod 600 ansible_ssh_key
-
-          # 3. Dynamically create the inventory file, now with the user specified
+          
           echo "[servers]" > ./ansible-config/inventory
           echo "app-server-1 ansible_host=${{ secrets.SERVER_IP }} ansible_user=dev" >> ./ansible-config/inventory
           
-          # --- DEBUG: Print the inventory file to the log ---
-          echo "--- ANSIBLE INVENTORY ---"
-          cat ./ansible-config/inventory
-          echo "-------------------------"
-
-          # 4. Execute the Ansible Playbook with verbose logging (-vvv)
           ansible-playbook \
-            -vvv \
             -i ./ansible-config/inventory \
             ./ansible-config/playbook.yml \
             --private-key ./ansible_ssh_key \
