@@ -184,8 +184,10 @@ jobs:
           python3 -m pip install ansible
           echo "${{ secrets.ANSIBLE_SSH_PRIVATE_KEY }}" > ansible_ssh_key
           chmod 600 ansible_ssh_key
+          echo "[servers]" > ./ansible-config/inventory
+          echo "app-server-1 ansible_host=${{ secrets.SERVER_IP }}" >> ./ansible-config/inventory
           ansible-playbook \
-            -i "${{ secrets.SERVER_IP }}," \
+            -i ./ansible-config/inventory \
             ./ansible-config/playbook.yml \
             --private-key ./ansible_ssh_key \
             --vault-password-file <(echo ${{ secrets.ANSIBLE_VAULT_PASSWORD }}) \
