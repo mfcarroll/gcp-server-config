@@ -98,8 +98,23 @@ jobs:
       - name: Checkout service repo
         uses: actions/checkout@v4
 
-      - name: Generate compose.yml from template
-        run: sed "s/__APP_NAME__/${{ env.APPNAME }}/g" compose.yml.template > ${{ env.APPNAME }}.yml
+      - name: Check for compose file type
+        id: check_files
+        run: |
+          if [[ -f compose.yml ]]; then
+            echo "file_to_use=compose.yml" >> $GITHUB_OUTPUT
+            echo "Using static compose.yml"
+          else
+            echo "file_to_use=compose.yml.template" >> $GITHUB_OUTPUT
+            echo "Using compose.yml.template for generation"
+          fi
+
+      - name: Prepare compose file for deployment
+        run: |
+          # This single step handles both cases:
+          # 1. If the source is compose.yml, it just gets renamed.
+          # 2. If the source is compose.yml.template, sed processes it.
+          sed "s/__APP_NAME__/${{ env.APPNAME }}/g" ${{ steps.check_files.outputs.file_to_use }} > ${{ env.APPNAME }}.yml
 
       - name: Copy compose config to server using native scp
         run: |
