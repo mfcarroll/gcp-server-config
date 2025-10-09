@@ -181,14 +181,27 @@ jobs:
 
       - name: Install Ansible and Run Playbook
         run: |
+          # 1. Install Ansible
           python3 -m pip install ansible
+
+          # 2. Save the private key to a file
           echo "${{ secrets.ANSIBLE_SSH_PRIVATE_KEY }}" > ansible_ssh_key
           chmod 600 ansible_ssh_key
+
+          # 3. Dynamically create the inventory file, now with the user specified
           echo "[servers]" > ./ansible-config/inventory
-          echo "app-server-1 ansible_host=${{ secrets.SERVER_IP }}" >> ./ansible-config/inventory
+          echo "app-server-1 ansible_host=${{ secrets.SERVER_IP }} ansible_user=dev" >> ./ansible-config/inventory
+          
+          # --- DEBUG: Print the inventory file to the log ---
+          echo "--- ANSIBLE INVENTORY ---"
+          cat ./ansible-config/inventory
+          echo "-------------------------"
+
+          # 4. Execute the Ansible Playbook with verbose logging (-vvv)
           ansible-playbook \
+            -vvv \
             -i ./ansible-config/inventory \
             ./ansible-config/playbook.yml \
             --private-key ./ansible_ssh_key \
             --vault-password-file <(echo ${{ secrets.ANSIBLE_VAULT_PASSWORD }}) \
-            --extra-vars "app_name=${{ env.APPNAME }} domain_name=${{ secrets.DOMAIN_NAME }} ansible_user=dev ansible_ssh_private_key_file=./ansible_ssh_key"
+            --extra-vars "app_name=${{ env.APPNAME }} domain_name=${{ secrets.DOMAIN_NAME }}"
