@@ -51,16 +51,14 @@
         state: directory
         mode: '0755'
 
-    - name: Create the individual services config directory
+    - name: Create base directories for appdata and services
       file:
-        path: /opt/docker/services
+        path: "/opt/docker/{{ item }}"
         state: directory
         mode: '0755'
-
-    - name: Copy Caddy Dockerfile to server
-      copy:
-        src: caddy
-        dest: /opt/docker/
+      loop:
+        - services
+        - caddy
 
     - name: Copy Cloudflare Origin Certificate
       copy:
@@ -77,7 +75,7 @@
     - name: Copy Caddyfile to server
       template:
         src: templates/Caddyfile.j2
-        dest: /opt/docker/Caddyfile
+        dest: /opt/docker/caddy/Caddyfile
 
     - name: Copy main Docker Compose file to server
       template:

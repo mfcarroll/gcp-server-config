@@ -6,6 +6,10 @@ on:
       appname:
         required: true
         type: string
+      appdata_dirs:
+        required: false
+        type: string
+        default: '[]' # Default to an empty list
     secrets:
       # Infrastructure and Domain secrets
       SERVER_IP:
@@ -73,7 +77,7 @@ jobs:
     runs-on: ubuntu-latest
     needs: build
     steps:
-      - name: Checkout ansible config repo # We need to check out the repo to access the script
+      - name: Checkout ansible config repo
         uses: actions/checkout@v4
         with:
           repository: ${{ github.repository_owner }}/gcp-server-config
@@ -103,26 +107,9 @@ jobs:
         run: |
           if [[ -f compose.yml ]]; then
             echo "file_to_use=compose.yml" >> $GITHUB_OUTPUT
-            echo "Using static compose.yml"
           else
             echo "file_to_use=compose.yml.template" >> $GITHUB_OUTPUT
-            echo "Using compose.yml.template for generation"
           fi
-
-      - name: Prepare compose file for deployment
-        run: |
-          # This single step handles both cases:
-          # 1. If the source is compose.yml, it just gets renamed.
-          # 2. If the source is compose.yml.template, sed processes it.
-          sed "s/__APP_NAME__/${{ env.APPNAME }}/g" ${{ steps.check_files.outputs.file_to_use }} > ${{ env.APPNAME }}.yml
-
-      - name: Copy compose config to server using native scp
-        run: |
-          echo "${{ secrets.ANSIBLE_SSH_PRIVATE_KEY }}" > deploy_key
-          chmod 600 deploy_key
-          scp -o StrictHostKeyChecking=no -i ./deploy_key \
-            ${{ env.APPNAME }}.yml \
-            dev@${{ secrets.SERVER_IP }}:/home/dev/
 
       - name: Checkout ansible config repo
         uses: actions/checkout@v4
@@ -131,15 +118,39 @@ jobs:
           token: ${{ secrets.GH_PAT }}
           path: ansible-config
 
-      - name: Cache pip
+      - name: Create services directory locally
+        run: mkdir -p ./ansible-config/services
+
+      - name: Prepare compose file for deployment
+        run: |
+          sed "s/__APP_NAME__/${{ env.APPNAME }}/g" ${{ steps.check_files.outputs.file_to_use }} > ./ansible-config/services/${{ env.APPNAME }}.yml
+
+      - name: Create app-specific data directories
+        uses: appleboy/ssh-action@v1.0.3
+        with:
+          host: ${{ secrets.SERVER_IP }}
+          username: dev
+          key: ${{ secrets.ANSIBLE_SSH_PRIVATE_KEY }}
+          script: |
+            if ! command -v jq &> /dev/null
+            then
+                sudo apt-get update && sudo apt-get install -y jq
+            fi
+            for dir in $(echo '${{ inputs.appdata_dirs }}' | jq -r '.[]'); do
+              sudo mkdir -p "/opt/docker/appdata/${{ inputs.appname }}/$dir"
+            done
+
+      - name: Cache pip and Install Ansible
         uses: actions/cache@v3
         with:
           path: ~/.cache/pip
           key: ${{ runner.os }}-pip-${{ hashFiles('**/requirements.txt') }}
           restore-keys: |
             ${{ runner.os }}-pip-
-
+      
       - name: Install Ansible and Run Playbook
+        env:
+          ANSIBLE_HOST_KEY_CHECKING: False
         run: |
           python3 -m pip install ansible
           echo "${{ secrets.ANSIBLE_SSH_PRIVATE_KEY }}" > ansible_ssh_key
