@@ -133,7 +133,7 @@ jobs:
           key: ${{ secrets.ANSIBLE_SSH_PRIVATE_KEY }}
           source: "./ansible-config/services/${{ env.APPNAME }}.yml"
           target: "/home/dev/"
-          strip_components: 2
+          strip_components: 3
 
       - name: Create app-specific data directories
         uses: appleboy/ssh-action@v1.0.3
