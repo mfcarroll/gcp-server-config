@@ -125,6 +125,16 @@ jobs:
         run: |
           sed "s/__APP_NAME__/${{ env.APPNAME }}/g" ${{ steps.check_files.outputs.file_to_use }} > ./ansible-config/services/${{ env.APPNAME }}.yml
 
+      - name: Upload compose file to server
+        uses: appleboy/scp-action@v1.0.0
+        with:
+          host: ${{ secrets.SERVER_IP }}
+          username: dev
+          key: ${{ secrets.ANSIBLE_SSH_PRIVATE_KEY }}
+          source: "./ansible-config/services/${{ env.APPNAME }}.yml"
+          target: "/home/dev/"
+          strip_components: 2
+
       - name: Create app-specific data directories
         uses: appleboy/ssh-action@v1.0.3
         with:
