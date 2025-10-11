@@ -45,6 +45,12 @@
           - docker-compose-plugin
         state: present
 
+    - name: Add dev user to the docker group
+      user:
+        name: dev
+        groups: docker
+        append: yes
+
     - name: Create the docker services directory
       file:
         path: /opt/docker
