@@ -9,14 +9,14 @@ on:
       appdata_dirs:
         required: false
         type: string
-        default: '[]' # Default to an empty list
+        default: "[]" # Default to an empty list
     secrets:
       # Infrastructure and Domain secrets
       SERVER_IP:
         required: true
       DOMAIN_NAME:
         required: true
-      
+
       # GCP Credentials
       GCP_WORKLOAD_IDENTITY_PROVIDER:
         required: true
@@ -24,7 +24,7 @@ on:
         required: true
       GCP_PROJECT_ID:
         required: true
-        
+
       # Cloudflare Credentials
       CLOUDFLARE_ZONE_ID:
         required: true
@@ -32,7 +32,7 @@ on:
         required: true
       CLOUDFLARE_API_TOKEN:
         required: true
-        
+
       # Ansible & GitHub Credentials
       ANSIBLE_SSH_PRIVATE_KEY:
         required: true
@@ -40,7 +40,7 @@ on:
         required: true
       GH_PAT:
         required: true
-      
+
       # App-specific secrets
       APP_ENV_FILE:
         required: false
@@ -53,17 +53,23 @@ jobs:
   build:
     runs-on: ubuntu-latest
     permissions:
-      contents: 'read'
-      id-token: 'write'
+      contents: "read"
+      id-token: "write"
+    outputs:
+      short_sha: ${{ steps.vars.outputs.short_sha }}
     steps:
       - name: Checkout code
         uses: actions/checkout@v4
 
+      - name: Get short git commit SHA
+        id: vars
+        run: echo "short_sha=$(git rev-parse --short HEAD)" >> $GITHUB_OUTPUT
+
       - name: Authenticate to Google Cloud
-        uses: 'google-github-actions/auth@v2'
+        uses: "google-github-actions/auth@v2"
         with:
-          workload_identity_provider: '${{ secrets.GCP_WORKLOAD_IDENTITY_PROVIDER }}'
-          service_account: '${{ secrets.GCP_SERVICE_ACCOUNT }}'
+          workload_identity_provider: "${{ secrets.GCP_WORKLOAD_IDENTITY_PROVIDER }}"
+          service_account: "${{ secrets.GCP_SERVICE_ACCOUNT }}"
 
       - name: Configure Docker for Artifact Registry
         run: gcloud auth configure-docker us-central1-docker.pkg.dev --quiet
@@ -76,8 +82,11 @@ jobs:
         with:
           context: .
           push: true
-          tags: us-central1-docker.pkg.dev/${{ secrets.GCP_PROJECT_ID }}/app-images/${{ env.APPNAME }}:latest
-          no-cache: true
+          tags: |
+            us-central1-docker.pkg.dev/${{ secrets.GCP_PROJECT_ID }}/app-images/${{ inputs.appname }}:latest
+            us-central1-docker.pkg.dev/${{ secrets.GCP_PROJECT_ID }}/app-images/${{ inputs.appname }}:${{ steps.vars.outputs.short_sha }}
+          cache-from: type=gha
+          cache-to: type=gha,mode=max
 
   provision-hostname:
     runs-on: ubuntu-latest
@@ -102,7 +111,7 @@ jobs:
           ./.github/scripts/provision-hostname.sh
 
   deploy:
-    needs: provision-hostname
+    needs: [build, provision-hostname]
     runs-on: ubuntu-latest
     steps:
       - name: Checkout service repo
@@ -129,7 +138,11 @@ jobs:
 
       - name: Prepare compose file for deployment
         run: |
+          # 1. Create the file with the App Name replaced
           sed "s/__APP_NAME__/${{ env.APPNAME }}/g" ${{ steps.check_files.outputs.file_to_use }} > ./ansible-config/services/${{ env.APPNAME }}.yml
+
+          # 2. In-place replace the Image Tag with the SHA from the build job
+          sed -i "s/__IMAGE_TAG__/${{ needs.build.outputs.short_sha }}/g" ./ansible-config/services/${{ env.APPNAME }}.yml
 
       - name: Upload compose file to server
         uses: appleboy/scp-action@v1.0.0
@@ -192,7 +205,7 @@ jobs:
           key: ${{ runner.os }}-pip-${{ hashFiles('**/requirements.txt') }}
           restore-keys: |
             ${{ runner.os }}-pip-
-      
+
       - name: Install Ansible and Run Playbook
         env:
           ANSIBLE_HOST_KEY_CHECKING: False
@@ -200,10 +213,10 @@ jobs:
           python3 -m pip install ansible
           echo "${{ secrets.ANSIBLE_SSH_PRIVATE_KEY }}" > ansible_ssh_key
           chmod 600 ansible_ssh_key
-          
+
           echo "[servers]" > ./ansible-config/inventory
           echo "app-server-1 ansible_host=${{ secrets.SERVER_IP }} ansible_user=dev" >> ./ansible-config/inventory
-          
+
           ansible-playbook \
             -i ./ansible-config/inventory \
             ./ansible-config/playbook.yml \

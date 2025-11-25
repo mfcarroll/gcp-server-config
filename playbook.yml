@@ -111,7 +111,6 @@
         project_src: /opt/docker
         files: "{{ ['compose.yml'] + (service_files.files | map(attribute='path') | list) }}"
         state: present
-        pull: always
 
     - name: Prune unused Docker images
       community.docker.docker_prune:
