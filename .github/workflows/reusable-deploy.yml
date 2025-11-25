@@ -40,6 +40,11 @@ on:
         required: true
       GH_PAT:
         required: true
+      
+      # App-specific secrets
+      APP_ENV_FILE:
+        required: false
+        description: "Content of the .env file to be written to the server"
 
 env:
   APPNAME: ${{ inputs.appname }}
@@ -150,6 +155,35 @@ jobs:
             for dir in $(echo '${{ inputs.appdata_dirs }}' | jq -r '.[]'); do
               sudo mkdir -p "/opt/docker/appdata/${{ inputs.appname }}/$dir"
             done
+
+      # Check if the secret exists and output a boolean flag
+      - name: Check for .env file secret
+        id: check_secret
+        env:
+          THE_SECRET: ${{ secrets.APP_ENV_FILE }}
+        run: |
+          if [ -n "$THE_SECRET" ]; then
+            echo "defined=true" >> "$GITHUB_OUTPUT"
+          else
+            echo "defined=false" >> "$GITHUB_OUTPUT"
+          fi
+
+      # Use the output from the previous step in the 'if' condition
+      - name: Write .env file to server
+        if: steps.check_secret.outputs.defined == 'true'
+        uses: appleboy/ssh-action@v1.0.3
+        env:
+          ENV_CONTENT: ${{ secrets.APP_ENV_FILE }}
+        with:
+          host: ${{ secrets.SERVER_IP }}
+          username: dev
+          key: ${{ secrets.ANSIBLE_SSH_PRIVATE_KEY }}
+          envs: ENV_CONTENT
+          script: |
+            # Write the env variable to the file (handles multiline correctly)
+            echo "$ENV_CONTENT" | sudo tee "/opt/docker/appdata/${{ inputs.appname }}/.env" > /dev/null
+            # Secure the file permissions
+            sudo chmod 600 "/opt/docker/appdata/${{ inputs.appname }}/.env"
 
       - name: Cache pip and Install Ansible
         uses: actions/cache@v3
