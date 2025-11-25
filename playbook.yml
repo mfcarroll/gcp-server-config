@@ -104,6 +104,7 @@
       find:
         paths: /opt/docker/services
         patterns: "*.yml"
+        excludes: "template.yml"
       register: service_files
 
     - name: Run all services with Docker Compose
@@ -111,6 +112,7 @@
         project_src: /opt/docker
         files: "{{ ['compose.yml'] + (service_files.files | map(attribute='path') | list) }}"
         state: present
+        remove_orphans: yes
 
     - name: Prune unused Docker images
       community.docker.docker_prune:
