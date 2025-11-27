@@ -215,7 +215,7 @@ jobs:
           chmod 600 ansible_ssh_key
 
           echo "[servers]" > ./ansible-config/inventory
-          echo "app-server-1 ansible_host=${{ secrets.SERVER_IP }} ansible_user=dev" >> ./ansible-config/inventory
+          echo "app-server-1 ansible_host=${{ secrets.SERVER_IP }} ansible_user=dev ansible_python_interpreter=/usr/bin/python3" >> ./ansible-config/inventory
 
           ansible-playbook \
             -i ./ansible-config/inventory \
