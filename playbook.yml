@@ -107,7 +107,9 @@
         images: yes
         images_filters:
           dangling: false
+      ignore_errors: yes
 
     - name: Prune unused Docker volumes
       community.docker.docker_prune:
         volumes: yes
+      ignore_errors: yes
