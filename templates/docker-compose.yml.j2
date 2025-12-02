@@ -1,18 +1,13 @@
 # Top-level compose file for shared services.
 # Individual application services are passed in by Ansible.
-
 services:
   caddy:
     build: /opt/docker/caddy
     restart: unless-stopped
     ports:
       - "80:80"
-      - "443:443"
-      - "443:443/udp"
     volumes:
       - /opt/docker/caddy/Caddyfile:/etc/caddy/Caddyfile
-      - /opt/docker/caddy/cert.pem:/etc/caddy/cert.pem
-      - /opt/docker/caddy/key.pem:/etc/caddy/key.pem
       - caddy_data:/data
       - caddy_config:/config
 

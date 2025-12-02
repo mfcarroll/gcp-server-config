@@ -1,8 +1,5 @@
 *.{{ domain_name }} {
-    tls /etc/caddy/cert.pem /etc/caddy/key.pem
-
     # Adjust `3` to match number of domain elements
-    # e.g. *.apps.example.com
-
+    # e.g. *.apps.example.com -> label index 3 is "appname"
     reverse_proxy {http.request.host.labels.3}-app:80
 }

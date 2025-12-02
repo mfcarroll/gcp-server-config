@@ -1,49 +1,43 @@
 # GCP Server Configuration (Ansible)
 
-This repository contains the Ansible configuration for the main GCP application server. It is responsible for installing core software (Docker, Caddy), managing the reverse proxy, and deploying all containerized applications via a reusable GitHub workflow.
+This repository contains the Ansible configuration for the main GCP application server.
 
-## Architecture Overview
-This setup uses a decoupled architecture to manage services. The main `playbook.yml` is generic and does not need to be modified when adding new applications.
+**Update:** Connectivity is now handled by **Cloudflare Tunnel**.
 
-* **Reusable Workflow**: The `.github/workflows/reusable-deploy.yml` file contains the master CI/CD logic for building, pushing, and deploying applications.
-* **Dynamic Configuration**: The server uses a top-level `compose.yml` that is dynamically configured by Ansible to include all individual application compose files from the `/opt/docker/services/` directory.
-* **Automated Routing**: A templated `Caddyfile` uses wildcards to automatically route traffic to the correct backend service based on the subdomain, requiring no changes for new apps.
+- **SSH**: requires `cloudflared` to connect.
+- **Web**: handled by a Wildcard DNS record pointing to the Tunnel.
 
-## Secrets Management with Ansible Vault
+## One-Time DNS Setup
 
-All server-wide secrets are stored in `vars/secrets.yml`. This file is encrypted and safe to commit to Git.
+Instead of provisioning a hostname for every new app, simply create a **Wildcard CNAME** in your Cloudflare Dashboard:
 
-### Initial Setup
+1.  Go to **DNS** > **Records**.
+2.  Add a `CNAME` record.
+3.  Name: `*.apps` (resulting in `*.apps.yourdomain.com`).
+4.  Target: `<Tunnel-UUID>.cfargotunnel.com`.
+5.  Proxy status: **Proxied**.
 
-To create the secrets file for the first time:
-```bash
-ansible-vault create vars/secrets.yml
-```
-You will be prompted to create a password. This password must be stored as the `ANSIBLE_VAULT_PASSWORD` secret in the GitHub Actions settings of any application repository that needs to trigger a deployment.
+This ensures that `myapp.apps.yourdomain.com` automatically routes to your server, where the Tunnel passes it to Caddy, and Caddy routes it to the correct container.
 
-### Editing Secrets
+## Manual Execution (Local)
 
-To edit the encrypted secrets file:
-```bash
-ansible-vault edit vars/secrets.yml
-```
+To run Ansible locally, you must have `cloudflared` installed and your SSH config set up to proxy the connection.
 
-The following secrets need to be defined in `vars/secrets.yml`:
-* `cloudflare_origin_cert`: The Cloudflare Origin Certificate (PEM format), correctly indented.
-* `cloudflare_origin_key`: The Cloudflare Origin Private Key (PEM format), correctly indented.
+1.  **Configure SSH**:
+    Add this to `~/.ssh/config`:
+    ```
+    Host gcp-server
+      HostName ssh.yourdomain.com
+      User dev
+      IdentityFile ~/.ssh/id_ed25519_gcp
+      ProxyCommand /usr/local/bin/cloudflared access ssh --hostname %h
+    ```
+2.  **Run Playbook**:
+    Edit the `inventory` file to use `ansible_host=gcp-server` (the Host alias from your config).
+    ```bash
+    ansible-playbook -i inventory playbook.yml --ask-vault-pass
+    ```
 
-## Manual Execution
-Running the playbook manually is only necessary for initial server setup or for debugging fundamental configuration changes. Application deployments are handled automatically by the reusable workflow.
+## Secrets
 
-To run the playbook from your local machine:
-```bash
-ansible-playbook -i inventory playbook.yml --ask-vault-pass
-```
-
-## Secrets Management
-All server-wide secrets (like the Cloudflare Origin Certificate) are stored in the encrypted `vars/secrets.yml`. To edit this file, use the command:
-```bash
-ansible-vault edit vars/secrets.yml
-```
-The vault password must be stored as the `ANSIBLE_VAULT_PASSWORD` secret in the GitHub settings of any application repository that needs to trigger a deployment.
-```
+The `cloudflare_origin_cert` and `cloudflare_origin_key` are **no longer required** in `vars/secrets.yml` as TLS is terminated at the Cloudflare Edge.
