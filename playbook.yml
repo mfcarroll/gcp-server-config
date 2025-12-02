@@ -70,8 +70,6 @@
       template:
         src: templates/Caddyfile.j2
         dest: /opt/docker/caddy/Caddyfile
-        # Trigger a reload if config changes (optional but good practice)
-        notify: Reload Caddy
 
     - name: Copy main Docker Compose file to server
       template:
