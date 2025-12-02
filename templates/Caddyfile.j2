@@ -1,4 +1,4 @@
-*.{{ domain_name }} {
+http://*.{{ domain_name }} {
     # Adjust `2` to match number of domain elements
     # e.g. *.example.com -> label index 2 is "appname"
     reverse_proxy {http.request.host.labels.2}-app:80
