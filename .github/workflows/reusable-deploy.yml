@@ -15,8 +15,6 @@ on:
         required: true
       DOMAIN_NAME:
         required: true
-
-      # Ansible & GitHub Credentials
       ANSIBLE_SSH_PRIVATE_KEY:
         required: true
       ANSIBLE_VAULT_PASSWORD:
@@ -63,17 +61,14 @@ jobs:
           cache-from: type=gha
           cache-to: type=gha,mode=max
 
-  # [REMOVED] provision-hostname job
-  # We assume you have set a Wildcard CNAME *.apps.yourdomain.com -> tunnel-uuid.cfargotunnel.com
-
   deploy:
-    needs: [build] # Removed provision-hostname dependency
+    needs: [build]
     runs-on: ubuntu-latest
     steps:
       - name: Checkout service repo
         uses: actions/checkout@v4
 
-      # --- Install cloudflared via official repo ---
+      # 1. Install cloudflared (Official Way)
       - name: Install cloudflared
         run: |
           sudo mkdir -p --mode=0755 /usr/share/keyrings
@@ -81,12 +76,19 @@ jobs:
           echo 'deb [signed-by=/usr/share/keyrings/cloudflare-public-v2.gpg] https://pkg.cloudflare.com/cloudflared any main' | sudo tee /etc/apt/sources.list.d/cloudflared.list
           sudo apt-get update && sudo apt-get install -y cloudflared
 
-      # --- Configure SSH to use the Tunnel ---
+      # 2. Configure SSH globally for the runner
       - name: Configure SSH over Cloudflare Tunnel
         run: |
           mkdir -p ~/.ssh
-          # Use ProxyCommand to route SSH through cloudflared
-          echo "Host ${{ secrets.SERVER_HOSTNAME }}" >> ~/.ssh/config
+
+          # Save Private Key to file
+          echo "${{ secrets.ANSIBLE_SSH_PRIVATE_KEY }}" > ~/.ssh/id_ed25519_gcp
+          chmod 600 ~/.ssh/id_ed25519_gcp
+
+          # Create Config with IdentityFile and ProxyCommand
+          echo "Host ${{ secrets.SERVER_HOSTNAME }}" > ~/.ssh/config
+          echo "  IdentityFile ~/.ssh/id_ed25519_gcp" >> ~/.ssh/config
+          echo "  User dev" >> ~/.ssh/config
           echo "  ProxyCommand /usr/bin/cloudflared access ssh --hostname %h" >> ~/.ssh/config
           echo "  StrictHostKeyChecking no" >> ~/.ssh/config
 
@@ -114,31 +116,20 @@ jobs:
           sed "s/__APP_NAME__/${{ env.APPNAME }}/g" ${{ steps.check_files.outputs.file_to_use }} > ./ansible-config/services/${{ env.APPNAME }}.yml
           sed -i "s/__IMAGE_TAG__/${{ needs.build.outputs.short_sha }}/g" ./ansible-config/services/${{ env.APPNAME }}.yml
 
+      # 3. Use native SCP (Respects ~/.ssh/config)
       - name: Upload compose file to server
-        uses: appleboy/scp-action@v1.0.0
-        with:
-          host: ${{ secrets.SERVER_HOSTNAME }}
-          username: dev
-          key: ${{ secrets.ANSIBLE_SSH_PRIVATE_KEY }}
-          source: "./ansible-config/services/${{ env.APPNAME }}.yml"
-          target: "/home/dev/"
-          strip_components: 3
-          # NOTE: appleboy/scp-action might not respect ~/.ssh/config by default.
-          # If it fails, we might need to use standard `scp` command.
-          # For now, let's assume standard scp usage or switch to:
-          # run: scp -i key.pem ./ansible-config/services/${{ env.APPNAME }}.yml dev@${{ secrets.SERVER_HOSTNAME }}:/home/dev/
+        run: |
+          scp ./ansible-config/services/${{ env.APPNAME }}.yml ${{ secrets.SERVER_HOSTNAME }}:/home/dev/
 
+      # 4. Use native SSH for mkdir (Respects ~/.ssh/config)
       - name: Create app-specific data directories
-        uses: appleboy/ssh-action@v1.0.3
-        with:
-          host: ${{ secrets.SERVER_HOSTNAME }}
-          username: dev
-          key: ${{ secrets.ANSIBLE_SSH_PRIVATE_KEY }}
-          script: |
-            if ! command -v jq &> /dev/null; then sudo apt-get update && sudo apt-get install -y jq; fi
-            for dir in $(echo '${{ inputs.appdata_dirs }}' | jq -r '.[]'); do
-              sudo mkdir -p "/opt/docker/appdata/${{ inputs.appname }}/$dir"
+        run: |
+          # Loop through the list locally on the runner using jq
+          if [ "${{ inputs.appdata_dirs }}" != "[]" ]; then
+            echo '${{ inputs.appdata_dirs }}' | jq -r '.[]' | while read dir; do
+              ssh ${{ secrets.SERVER_HOSTNAME }} "sudo mkdir -p /opt/docker/appdata/${{ inputs.appname }}/$dir"
             done
+          fi
 
       - name: Check for .env file secret
         id: check_secret
@@ -147,19 +138,13 @@ jobs:
         run: |
           if [ -n "$THE_SECRET" ]; then echo "defined=true" >> "$GITHUB_OUTPUT"; else echo "defined=false" >> "$GITHUB_OUTPUT"; fi
 
+      # 5. Use native SSH for .env writing
       - name: Write .env file to server
         if: steps.check_secret.outputs.defined == 'true'
-        uses: appleboy/ssh-action@v1.0.3
         env:
           ENV_CONTENT: ${{ secrets.APP_ENV_FILE }}
-        with:
-          host: ${{ secrets.SERVER_HOSTNAME }}
-          username: dev
-          key: ${{ secrets.ANSIBLE_SSH_PRIVATE_KEY }}
-          envs: ENV_CONTENT
-          script: |
-            echo "$ENV_CONTENT" | sudo tee "/opt/docker/appdata/${{ inputs.appname }}/.env" > /dev/null
-            sudo chmod 600 "/opt/docker/appdata/${{ inputs.appname }}/.env"
+        run: |
+          echo "$ENV_CONTENT" | ssh ${{ secrets.SERVER_HOSTNAME }} "sudo tee /opt/docker/appdata/${{ inputs.appname }}/.env > /dev/null && sudo chmod 600 /opt/docker/appdata/${{ inputs.appname }}/.env"
 
       - name: Cache pip and Install Ansible
         uses: actions/cache@v3
@@ -169,22 +154,20 @@ jobs:
           restore-keys: |
             ${{ runner.os }}-pip-
 
+      # 6. Simplify Ansible (Uses system SSH automatically)
       - name: Install Ansible and Run Playbook
         env:
           ANSIBLE_HOST_KEY_CHECKING: False
         run: |
           python3 -m pip install ansible
-          echo "${{ secrets.ANSIBLE_SSH_PRIVATE_KEY }}" > ansible_ssh_key
-          chmod 600 ansible_ssh_key
 
-          # Inventory now points to the hostname (ssh.yourdomain.com) which Ansible
-          # will resolve via ~/.ssh/config using cloudflared
+          # Ansible Inventory
           echo "[servers]" > ./ansible-config/inventory
           echo "app-server-1 ansible_host=${{ secrets.SERVER_HOSTNAME }} ansible_user=dev ansible_python_interpreter=/usr/bin/python3" >> ./ansible-config/inventory
 
+          # Run Playbook (No need for --private-key arg as it's in ~/.ssh/config now)
           ansible-playbook \
             -i ./ansible-config/inventory \
             ./ansible-config/playbook.yml \
-            --private-key ./ansible_ssh_key \
             --vault-password-file <(echo ${{ secrets.ANSIBLE_VAULT_PASSWORD }}) \
             --extra-vars "app_name=${{ env.APPNAME }} domain_name=${{ secrets.DOMAIN_NAME }}"
