@@ -2,7 +2,7 @@
 # Individual application services are passed in by Ansible.
 services:
   caddy:
-    build: /opt/docker/caddy
+    image: caddy:2-alpine
     restart: unless-stopped
     ports:
       - "80:80"
