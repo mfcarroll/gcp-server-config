@@ -6,6 +6,45 @@
     - vars/secrets.yml
 
   tasks:
+    - name: Check if swap file exists
+      stat:
+        path: /swapfile
+      register: swap_file_check
+
+    - name: Create 2GB swap file
+      command: fallocate -l 2G /swapfile
+      when: not swap_file_check.stat.exists
+
+    - name: Set swap file permissions
+      file:
+        path: /swapfile
+        owner: root
+        group: root
+        mode: '0600'
+
+    - name: Make swap file
+      command: mkswap /swapfile
+      when: not swap_file_check.stat.exists
+
+    - name: Enable swap
+      command: swapon /swapfile
+      when: not swap_file_check.stat.exists
+
+    - name: Add swap to fstab
+      mount:
+        name: none
+        src: /swapfile
+        fstype: swap
+        opts: sw
+        state: present
+
+    - name: Add Google Cloud Ops Agent repo
+      shell: |
+        curl -sSO https://dl.google.com/cloudagents/add-google-cloud-ops-agent-repo.sh
+        bash add-google-cloud-ops-agent-repo.sh --also-install
+      args:
+        creates: /etc/apt/sources.list.d/google-cloud-ops-agent.list
+
     - name: Update apt cache
       apt:
         update_cache: yes
