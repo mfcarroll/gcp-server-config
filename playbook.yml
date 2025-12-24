@@ -134,6 +134,14 @@
         excludes: "template.yml"
       register: service_files
 
+    - name: Stop old application instance to free memory
+      community.docker.docker_compose_v2:
+        project_src: /opt/docker
+        files: "{{ ['compose.yml'] + (service_files.files | map(attribute='path') | list) }}"
+        services:
+          - "{{ app_name }}-app"
+        state: absent
+
     - name: Run all services with Docker Compose
       community.docker.docker_compose_v2:
         project_src: /opt/docker
