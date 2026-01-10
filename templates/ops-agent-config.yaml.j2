@@ -1,0 +1,33 @@
+logging:
+  receivers:
+    docker_logs:
+      type: files
+      include_paths:
+        - /var/lib/docker/containers/*/*-json.log
+  processors:
+    # 1. Parse the JSON structure that Docker wraps logs in
+    # (Docker lines look like: {"log":"{\"timestamp\":...}", "stream":"stdout", ...})
+    parse_docker_wrapper:
+      type: parse_json
+      field: message
+
+    # 2. Parse the actual JSON from your Deno app (contained in the 'log' field from above)
+    parse_app_json:
+      type: parse_json
+      field: log
+      # Using 'timestamp' helps Google Cloud place the log correctly in the timeline
+      time_key: timestamp
+      time_format: "%Y-%m-%dT%H:%M:%S.%LZ"
+
+    # 3. Map severity levels (e.g. WARN -> WARNING) so the color indicators work in GCP
+    move_severity:
+      type: modify_fields
+      fields:
+        severity:
+          move_from: jsonPayload.severity
+
+  service:
+    pipelines:
+      default_pipeline:
+        receivers: [docker_logs]
+        processors: [parse_docker_wrapper, parse_app_json, move_severity]

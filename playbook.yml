@@ -20,7 +20,7 @@
         path: /swapfile
         owner: root
         group: root
-        mode: '0600'
+        mode: "0600"
 
     - name: Make swap file
       command: mkswap /swapfile
@@ -66,7 +66,7 @@
       get_url:
         url: https://download.docker.com/linux/debian/gpg
         dest: /etc/apt/keyrings/docker.asc
-        mode: '0644'
+        mode: "0644"
         force: yes
 
     - name: Add Docker repository
@@ -94,16 +94,23 @@
       file:
         path: /opt/docker
         state: directory
-        mode: '0755'
+        mode: "0755"
 
     - name: Create base directories for appdata and services
       file:
         path: "/opt/docker/{{ item }}"
         state: directory
-        mode: '0755'
+        mode: "0755"
       loop:
         - services
         - caddy
+
+    - name: Configure Google Cloud Ops Agent
+      template:
+        src: templates/ops-agent-config.yaml.j2
+        dest: /etc/google-cloud-ops-agent/config.yaml
+        mode: "0644"
+      notify: Restart Ops Agent
 
     - name: Copy Caddyfile to server
       template:
@@ -121,7 +128,7 @@
         dest: "/opt/docker/services/{{ app_name }}.yml"
         owner: root
         group: root
-        mode: '0644'
+        mode: "0644"
         remote_src: yes
 
     - name: Configure Docker to use Google Cloud credentials
@@ -160,3 +167,9 @@
       community.docker.docker_prune:
         volumes: yes
       ignore_errors: yes
+
+  handlers:
+    - name: Restart Ops Agent
+      service:
+        name: google-cloud-ops-agent
+        state: restarted
