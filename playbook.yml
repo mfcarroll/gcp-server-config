@@ -6,6 +6,7 @@
     - vars/secrets.yml
 
   tasks:
+    # --- SWAP CONFIGURATION ---
     - name: Check if swap file exists
       stat:
         path: /swapfile
@@ -38,6 +39,29 @@
         opts: sw
         state: present
 
+    # --- SYSTEMD DNS CONFIGURATION (Required for WireGuard) ---
+    - name: Disable systemd-resolved StubListener
+      lineinfile:
+        path: /etc/systemd/resolved.conf
+        regexp: "^#?DNSStubListener="
+        line: "DNSStubListener=no"
+        state: present
+
+    - name: Update resolv.conf symlink to use upstream DNS directly
+      file:
+        src: /run/systemd/resolve/resolv.conf
+        dest: /etc/resolv.conf
+        state: link
+        force: yes
+
+    # [FIX] Restart immediately and unconditionally to ensure Port 53 is freed.
+    # We do this as a Task, not a Handler, to fix the idempotency issue.
+    - name: Apply systemd-resolved changes immediately
+      service:
+        name: systemd-resolved
+        state: restarted
+
+    # --- PACKAGES & DOCKER ---
     - name: Add Google Cloud Ops Agent repo
       shell: |
         curl -sSO https://dl.google.com/cloudagents/add-google-cloud-ops-agent-repo.sh
@@ -90,13 +114,7 @@
         groups: docker
         append: yes
 
-    - name: Create the docker services directory
-      file:
-        path: /opt/docker
-        state: directory
-        mode: "0755"
-
-    - name: Create base directories for appdata and services
+    - name: Create base directories
       file:
         path: "/opt/docker/{{ item }}"
         state: directory
@@ -104,7 +122,18 @@
       loop:
         - services
         - caddy
+        - wireguard
 
+    # [NEW] Enable IPv4 forwarding on the HOST OS (Critical for VPN routing)
+    - name: Enable Host IP Forwarding
+      sysctl:
+        name: net.ipv4.ip_forward
+        value: "1"
+        sysctl_set: yes
+        state: present
+        reload: yes
+
+    # --- CONFIG FILES ---
     - name: Configure Google Cloud Ops Agent
       template:
         src: templates/ops-agent-config.yaml.j2
@@ -116,11 +145,20 @@
       template:
         src: templates/Caddyfile.j2
         dest: /opt/docker/caddy/Caddyfile
+      notify: Restart Caddy
 
     - name: Copy main Docker Compose file to server
       template:
         src: templates/docker-compose.yml.j2
         dest: /opt/docker/compose.yml
+
+    - name: Copy WireGuard Compose file
+      template:
+        src: templates/wireguard.yml.j2
+        dest: /opt/docker/services/wireguard.yml
+        mode: "0644"
+
+    # --- CI/CD APP DEPLOYMENT STEPS ---
 
     - name: Move application compose file into place
       copy:
@@ -130,6 +168,7 @@
         group: root
         mode: "0644"
         remote_src: yes
+      when: app_name is defined
 
     - name: Configure Docker to use Google Cloud credentials
       command: gcloud auth configure-docker us-central1-docker.pkg.dev --quiet
@@ -138,9 +177,9 @@
       find:
         paths: /opt/docker/services
         patterns: "*.yml"
-        excludes: "template.yml"
       register: service_files
 
+    # THIS IS THE CRITICAL RESTORED TASK
     - name: Stop old application instance to free memory
       community.docker.docker_compose_v2:
         project_src: /opt/docker
@@ -148,6 +187,10 @@
         services:
           - "{{ app_name }}-app"
         state: absent
+      # Only run this if we are actually deploying an app
+      when: app_name is defined
+
+    # --- FINAL CONVERGENCE ---
 
     - name: Run all services with Docker Compose
       community.docker.docker_compose_v2:
@@ -172,4 +215,16 @@
     - name: Restart Ops Agent
       service:
         name: google-cloud-ops-agent
+        state: restarted
+
+    - name: Restart systemd-resolved
+      service:
+        name: systemd-resolved
+        state: restarted
+
+    - name: Restart Caddy
+      community.docker.docker_compose_v2:
+        project_src: /opt/docker
+        services:
+          - caddy
         state: restarted

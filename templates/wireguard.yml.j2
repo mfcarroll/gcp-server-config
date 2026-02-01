@@ -1,0 +1,56 @@
+services:
+  # 1. WireGuard VPN
+  wireguard:
+    image: ghcr.io/wg-easy/wg-easy
+    container_name: wireguard-app
+    restart: unless-stopped
+    depends_on:
+      - ddns
+    cap_add:
+      - NET_ADMIN
+      - SYS_MODULE
+    sysctls:
+      - net.ipv4.ip_forward=1
+      - net.ipv4.conf.all.src_valid_mark=1
+    environment:
+      - WG_HOST=vpn.{{ domain_name }}
+      - PASSWORD_HASH={{ wireguard_password }}
+      
+      # [INTERNAL] VPN Traffic listens on this port inside
+      - WG_PORT=51820
+      
+      # [INTERNAL] Web UI listens on this port inside (TCP)
+      - PORT=80
+      
+      - WG_DEFAULT_ADDRESS=10.8.0.x
+      - WG_DEFAULT_DNS=1.1.1.1
+      - WG_MTU=1360
+      
+    volumes:
+      - /opt/docker/wireguard:/etc/wireguard
+
+    ports:
+      # 1. Standard WireGuard (The default)
+      - "51820:51820/udp"
+      
+      # 2. DNS Masquerade (Bypass Firewalls blocking non-DNS)
+      - "53:51820/udp"
+      
+      # 3. HTTPS Masquerade (Bypass Firewalls blocking non-HTTP/3)
+      - "443:51820/udp"
+      
+      # 4. HTTP Masquerade (Bypass "Web Only" Firewalls)
+      # This works safely because it is UDP. Caddy uses TCP 80.
+      - "80:51820/udp"
+
+  # 2. Dynamic DNS Updater
+  ddns:
+    image: favonia/cloudflare-ddns:latest
+    container_name: ddns
+    restart: unless-stopped
+    network_mode: host
+    environment:
+      - CLOUDFLARE_API_TOKEN={{ cloudflare_api_token }}
+      - DOMAINS=vpn.{{ domain_name }}
+      - PROXIED=false
+      - IP6_PROVIDER=none
