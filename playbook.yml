@@ -81,10 +81,203 @@
           - ca-certificates
           - curl
           - gnupg
-          - software-properties-common
-          - python3-pip
-          - google-cloud-sdk
+          - lsb-release
         state: present
+
+    - name: Install sslh
+      apt:
+        name: sslh
+        state: present
+
+    # --- SSLH (BUILD FROM SOURCE FOR UDP SUPPORT) ---
+    - name: Remove apt sslh package (too old)
+      apt:
+        name: sslh
+        state: absent
+        purge: yes
+
+    - name: Install sslh build dependencies
+      apt:
+        name:
+          - git
+          - make
+          - gcc
+          - autoconf # Required to generate configure script
+          - automake # Required for build system
+          - libtool # Often required for autoreconf
+          - pkg-config # Helper for finding libraries
+          - libconfig-dev
+          - libpcre2-dev
+          - libev-dev
+          - libcap-dev # Required for transparent proxying
+          - libsystemd-dev # CRITICAL: Required for systemd socket activation support
+          - libbsd-dev # Required for process name updates (ps output)
+          - libwrap0-dev # TCP wrappers support
+        state: present
+
+    - name: Checkout sslh source code
+      git:
+        repo: https://github.com/yrutschle/sslh.git
+        dest: /opt/sslh-source
+        version: v2.3.0 # Use latest stable version (supports UDP & autoconf)
+        force: yes # Ensure we cleanly switch versions if repo exists
+
+    - name: Generate configure script (autoreconf)
+      command: autoreconf --install
+      args:
+        chdir: /opt/sslh-source
+        creates: /opt/sslh-source/configure
+
+    - name: Configure build
+      command: ./configure
+      args:
+        chdir: /opt/sslh-source
+        creates: /opt/sslh-source/Makefile
+
+    - name: Compile sslh
+      command: make
+      args:
+        chdir: /opt/sslh-source
+        creates: /opt/sslh-source/sslh-select
+
+    - name: Install sslh binary
+      copy:
+        src: /opt/sslh-source/sslh-select
+        dest: /usr/local/sbin/sslh
+        mode: "0755"
+        remote_src: yes
+      notify: restart sslh
+
+    - name: Create sslh user
+      user:
+        name: sslh
+        system: yes
+        shell: /usr/sbin/nologin
+
+    # --- SSLH CONFIGURATION ---
+    - name: Configure sslh for UDP multiplexing (WireGuard/DNS)
+      copy:
+        dest: /etc/sslh.cfg
+        content: |
+          verbose: false;
+          foreground: true;
+          inetd: false;
+          numeric: true;
+          transparent: false;
+          timeout: 2;
+          user: "sslh";
+          pidfile: "/var/run/sslh.pid";
+
+          # Define protocols
+          protocols:
+          (
+              # WireGuard (UDP) - Matches handshake (0x01) or data (0x04)
+              { name: "wireguard"; host: "localhost"; port: "51820"; is_udp: true; regex: "^\x01\x00\x00\x00"; },
+              { name: "wireguard"; host: "localhost"; port: "51820"; is_udp: true; regex: "^\x04\x00\x00\x00"; },
+              
+              # Iodine (Default UDP fallback)
+              { name: "anyprot"; host: "localhost"; port: "5353"; is_udp: true; }
+          );
+      notify: restart sslh
+
+    - name: Create systemd service for sslh
+      copy:
+        dest: /etc/systemd/system/sslh.service
+        content: |
+          [Unit]
+          Description=SSL/SSH multiplexer (Custom Build)
+          After=network.target
+
+          [Service]
+          # Use -p for port (v2.x syntax) and ensure --udp is passed
+          ExecStart=/usr/local/sbin/sslh --foreground --user sslh -p 0.0.0.0:53 --udp --config /etc/sslh.cfg
+          KillMode=process
+          Restart=always
+
+          [Install]
+          WantedBy=multi-user.target
+      notify: restart sslh
+
+    - name: Ensure sslh is enabled and running
+      service:
+        name: sslh
+        state: started
+        enabled: yes
+
+    # --- SSLH CONFIGURATION ---
+    - name: Configure sslh for UDP multiplexing (WireGuard/DNS)
+      copy:
+        dest: /etc/sslh.cfg
+        content: |
+          # General settings
+          verbose: false;
+          foreground: true;
+          inetd: false;
+          numeric: true;
+          transparent: false;
+          timeout: 2;
+          user: "sslh";  # Drop privileges to this user after binding ports
+          pidfile: "/var/run/sslh.pid";
+
+          # LISTENING SOCKETS (The critical fix)
+          listen:
+          (
+              { host: "0.0.0.0"; port: "53"; is_udp: true; }
+          );
+
+          # TARGET PROTOCOLS
+          protocols:
+          (
+              # WireGuard (UDP) - Handshake (0x01) and Data (0x04)
+              { name: "wireguard"; host: "localhost"; port: "51820"; is_udp: true; regex: "^\x01\x00\x00\x00"; },
+              { name: "wireguard"; host: "localhost"; port: "51820"; is_udp: true; regex: "^\x04\x00\x00\x00"; },
+              
+              # Iodine (Default UDP fallback)
+              { name: "anyprot"; host: "localhost"; port: "5353"; is_udp: true; }
+          );
+      notify: restart sslh
+
+    - name: Create systemd service for sslh
+      copy:
+        dest: /etc/systemd/system/sslh.service
+        content: |
+          [Unit]
+          Description=SSL/SSH multiplexer (Custom Build)
+          After=network.target
+
+          [Service]
+          # CLEAN COMMAND: All settings are now in the config file
+          ExecStart=/usr/local/sbin/sslh --foreground --config /etc/sslh.cfg
+          KillMode=process
+          Restart=always
+
+          # Ensure it can read the config and bind ports before dropping user
+          User=root
+
+          [Install]
+          WantedBy=multi-user.target
+      notify: restart sslh
+
+    # Reset systemd to handle the changed unit file and ensure clean start
+    - name: Reset systemd state for sslh
+      systemd:
+        name: sslh
+        daemon_reload: yes
+        masked: no
+        enabled: yes
+
+    - name: Ensure sslh is enabled and running
+      service:
+        name: sslh
+        state: started
+        enabled: yes
+
+    # --- DOCKER SETUP ---
+    - name: Create directory for apt keyrings
+      file:
+        path: /etc/apt/keyrings
+        state: directory
+        mode: "0755"
 
     - name: Add Docker GPG key
       get_url:
@@ -216,6 +409,12 @@
       service:
         name: google-cloud-ops-agent
         state: restarted
+
+    - name: restart sslh
+      service:
+        name: sslh
+        state: restarted
+        enabled: yes
 
     - name: Restart systemd-resolved
       service:

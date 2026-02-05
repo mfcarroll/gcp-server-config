@@ -15,35 +15,44 @@ services:
     environment:
       - WG_HOST=vpn.{{ domain_name }}
       - PASSWORD_HASH={{ wireguard_password }}
-      
-      # [INTERNAL] VPN Traffic listens on this port inside
       - WG_PORT=51820
-      
-      # [INTERNAL] Web UI listens on this port inside (TCP)
       - PORT=80
-      
       - WG_DEFAULT_ADDRESS=10.8.0.x
       - WG_DEFAULT_DNS=1.1.1.1
       - WG_MTU=1360
-      
     volumes:
       - /opt/docker/wireguard:/etc/wireguard
-
     ports:
-      # 1. Standard WireGuard (The default)
+      # [CRITICAL CHANGE]
+      # 1. We REMOVE "53:51820/udp" because sslh will now own Port 53 on the host.
+      
+      # 2. We keep the standard port so sslh can forward traffic here.
       - "51820:51820/udp"
       
-      # 2. DNS Masquerade (Bypass Firewalls blocking non-DNS)
-      - "53:51820/udp"
-      
-      # 3. HTTPS Masquerade (Bypass Firewalls blocking non-HTTP/3)
+      # 3. Keep your other backups
       - "443:51820/udp"
-      
-      # 4. HTTP Masquerade (Bypass "Web Only" Firewalls)
-      # This works safely because it is UDP. Caddy uses TCP 80.
       - "80:51820/udp"
+      - "4500:51820/udp"
 
-  # 2. Dynamic DNS Updater
+# 2. Iodine (DNS Tunnel)
+  iodine:
+    image: spritsail/iodine:latest
+    container_name: iodine
+    restart: unless-stopped
+    cap_add:
+      - NET_ADMIN
+      - SYS_MODULE
+    devices:
+      - /dev/net/tun:/dev/net/tun
+    ports:
+      # Map Host 5353 -> Container 53
+      # (sslh receives on Public 53 -> forwards to Host 5353 -> Docker maps to Container 53)
+      - "5353:53/udp"
+    command: >
+      sh -c "iptables -t nat -A POSTROUTING -o eth0 -j MASQUERADE &&
+      iodined -f -c -P {{ iodine_password }} 10.200.0.1 t.{{ domain_name }}"
+
+  # 3. Dynamic DNS Updater
   ddns:
     image: favonia/cloudflare-ddns:latest
     container_name: ddns
