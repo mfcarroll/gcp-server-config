@@ -39,16 +39,17 @@ services:
     image: spritsail/iodine:latest
     container_name: iodine
     restart: unless-stopped
+
+    # [CRITICAL] Run on Host Network so 'dns0' is visible to the Kernel for routing
+    network_mode: host
+    
     cap_add:
       - NET_ADMIN
       - SYS_MODULE
     devices:
       - /dev/net/tun:/dev/net/tun
-    ports:
-      # Map Host 5353 -> Container 53
-      # (sslh receives on Public 53 -> forwards to Host 5353 -> Docker maps to Container 53)
-      - "5353:53/udp"
-    command: iodined -f -c -P {{ iodine_password }} 10.200.0.1 t.{{ domain_name }}
+    command: >
+      iodined -f -c -p 5353 -P {{ iodine_password }} 10.200.0.1 t.{{ domain_name }}
 
   # 3. Dynamic DNS Updater
   ddns:

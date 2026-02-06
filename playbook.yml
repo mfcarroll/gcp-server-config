@@ -159,12 +159,13 @@
       copy:
         dest: /etc/sslh.cfg
         content: |
+          # General settings
           verbose: false;
           foreground: true;
           inetd: false;
           numeric: true;
           transparent: false;
-          timeout: 2;
+          timeout: 5;
           user: "sslh";
           pidfile: "/var/run/sslh.pid";
 
@@ -337,6 +338,32 @@
         out_interface: "{{ ansible_default_ipv4.interface }}"
         jump: MASQUERADE
         comment: "Allow Iodine tunnel traffic to reach the internet"
+
+    # Allow Forwarding FROM Iodine
+    - name: Allow Forwarding from Iodine Tunnel
+      iptables:
+        chain: FORWARD
+        in_interface: dns0
+        jump: ACCEPT
+        comment: "Allow traffic coming from Iodine tunnel"
+
+    # Allow Forwarding TO Iodine
+    - name: Allow Forwarding to Iodine Tunnel
+      iptables:
+        chain: FORWARD
+        out_interface: dns0
+        jump: ACCEPT
+        comment: "Allow traffic going to Iodine tunnel"
+
+    # [FIXED] Fix MTU/MSS Mismatch via Shell (Bypassing module limits)
+    - name: Clamp MSS for Iodine Tunnel
+      shell: |
+        # Check if rule exists (-C), if not, add it (-A)
+        iptables -t mangle -C FORWARD -o dns0 -p tcp --tcp-flags SYN,RST SYN -j TCPMSS --clamp-mss-to-pmtu 2>/dev/null || \
+        iptables -t mangle -A FORWARD -o dns0 -p tcp --tcp-flags SYN,RST SYN -j TCPMSS --clamp-mss-to-pmtu
+      args:
+        executable: /bin/bash
+      changed_when: false
 
     # --- CONFIG FILES ---
     - name: Configure Google Cloud Ops Agent
