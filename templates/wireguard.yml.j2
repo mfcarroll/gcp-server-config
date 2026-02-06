@@ -48,9 +48,7 @@ services:
       # Map Host 5353 -> Container 53
       # (sslh receives on Public 53 -> forwards to Host 5353 -> Docker maps to Container 53)
       - "5353:53/udp"
-    command: >
-      sh -c "iptables -t nat -A POSTROUTING -o eth0 -j MASQUERADE &&
-      iodined -f -c -P {{ iodine_password }} 10.200.0.1 t.{{ domain_name }}"
+    command: iodined -f -c -P {{ iodine_password }} 10.200.0.1 t.{{ domain_name }}
 
   # 3. Dynamic DNS Updater
   ddns:

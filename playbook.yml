@@ -317,7 +317,7 @@
         - caddy
         - wireguard
 
-    # [NEW] Enable IPv4 forwarding on the HOST OS (Critical for VPN routing)
+    # Enable IPv4 forwarding on the HOST OS (Critical for VPN routing)
     - name: Enable Host IP Forwarding
       sysctl:
         name: net.ipv4.ip_forward
@@ -325,6 +325,18 @@
         sysctl_set: yes
         state: present
         reload: yes
+
+    # Configure NAT for Iodine Tunnel
+    # This ensures traffic from the tunnel (10.0.0.0/8) is masqueraded
+    # as the server's public IP when leaving via the default interface.
+    - name: Enable Masquerade for Iodine Tunnel
+      iptables:
+        table: nat
+        chain: POSTROUTING
+        source: 10.0.0.0/8
+        out_interface: "{{ ansible_default_ipv4.interface }}"
+        jump: MASQUERADE
+        comment: "Allow Iodine tunnel traffic to reach the internet"
 
     # --- CONFIG FILES ---
     - name: Configure Google Cloud Ops Agent
