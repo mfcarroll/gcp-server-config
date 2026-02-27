@@ -205,74 +205,6 @@
         state: started
         enabled: yes
 
-    # --- SSLH CONFIGURATION ---
-    - name: Configure sslh for UDP multiplexing (WireGuard/DNS)
-      copy:
-        dest: /etc/sslh.cfg
-        content: |
-          # General settings
-          verbose: false;
-          foreground: true;
-          inetd: false;
-          numeric: true;
-          transparent: false;
-          timeout: 2;
-          user: "sslh";  # Drop privileges to this user after binding ports
-          pidfile: "/var/run/sslh.pid";
-
-          # LISTENING SOCKETS (The critical fix)
-          listen:
-          (
-              { host: "0.0.0.0"; port: "53"; is_udp: true; }
-          );
-
-          # TARGET PROTOCOLS
-          protocols:
-          (
-              # WireGuard (UDP) - Handshake (0x01) and Data (0x04)
-              { name: "wireguard"; host: "localhost"; port: "51820"; is_udp: true; regex: "^\x01\x00\x00\x00"; },
-              { name: "wireguard"; host: "localhost"; port: "51820"; is_udp: true; regex: "^\x04\x00\x00\x00"; },
-              
-              # Iodine (Default UDP fallback)
-              { name: "anyprot"; host: "localhost"; port: "5353"; is_udp: true; }
-          );
-      notify: restart sslh
-
-    - name: Create systemd service for sslh
-      copy:
-        dest: /etc/systemd/system/sslh.service
-        content: |
-          [Unit]
-          Description=SSL/SSH multiplexer (Custom Build)
-          After=network.target
-
-          [Service]
-          # CLEAN COMMAND: All settings are now in the config file
-          ExecStart=/usr/local/sbin/sslh --foreground --config /etc/sslh.cfg
-          KillMode=process
-          Restart=always
-
-          # Ensure it can read the config and bind ports before dropping user
-          User=root
-
-          [Install]
-          WantedBy=multi-user.target
-      notify: restart sslh
-
-    # Reset systemd to handle the changed unit file and ensure clean start
-    - name: Reset systemd state for sslh
-      systemd:
-        name: sslh
-        daemon_reload: yes
-        masked: no
-        enabled: yes
-
-    - name: Ensure sslh is enabled and running
-      service:
-        name: sslh
-        state: started
-        enabled: yes
-
     # --- DOCKER SETUP ---
     - name: Create directory for apt keyrings
       file:
@@ -392,77 +324,52 @@
 
     # --- CI/CD APP DEPLOYMENT STEPS ---
 
-    - name: Move application compose file into place
-      copy:
-        src: "/home/dev/{{ app_name }}.yml"
-        dest: "/opt/docker/services/{{ app_name }}.yml"
-        owner: root
-        group: root
-        mode: "0644"
-        remote_src: yes
-      when: app_name is defined
+    - name: CI/CD App Deployment Block
+      tags: ["deploy"]
+      block:
+        - name: Move application compose file into place
+          copy:
+            src: "/home/dev/{{ app_name }}.yml"
+            dest: "/opt/docker/services/{{ app_name }}.yml"
+            owner: root
+            group: root
+            mode: "0644"
+            remote_src: yes
+          when: app_name is defined
 
-    - name: Configure Docker to use Google Cloud credentials
-      command: gcloud auth configure-docker us-central1-docker.pkg.dev --quiet
+        - name: Configure Docker to use Google Cloud credentials
+          command: gcloud auth configure-docker us-central1-docker.pkg.dev --quiet
 
-    - name: Find all individual service compose files
-      find:
-        paths: /opt/docker/services
-        patterns: "*.yml"
-      register: service_files
+        - name: Find all individual service compose files
+          find:
+            paths: /opt/docker/services
+            patterns: "*.yml"
+          register: service_files
 
-    # THIS IS THE CRITICAL RESTORED TASK
-    - name: Stop old application instance to free memory
-      community.docker.docker_compose_v2:
-        project_src: /opt/docker
-        files: "{{ ['compose.yml'] + (service_files.files | map(attribute='path') | list) }}"
-        services:
-          - "{{ app_name }}-app"
-        state: absent
-      # Only run this if we are actually deploying an app
-      when: app_name is defined
+        - name: Stop old application instance to free memory
+          community.docker.docker_compose_v2:
+            project_src: /opt/docker
+            files: "{{ ['compose.yml'] + (service_files.files | map(attribute='path') | list) }}"
+            services:
+              - "{{ app_name }}-app"
+            state: absent
+          when: app_name is defined
 
-    # --- FINAL CONVERGENCE ---
+        - name: Run all services with Docker Compose
+          community.docker.docker_compose_v2:
+            project_src: /opt/docker
+            files: "{{ ['compose.yml'] + (service_files.files | map(attribute='path') | list) }}"
+            state: present
+            remove_orphans: yes
 
-    - name: Run all services with Docker Compose
-      community.docker.docker_compose_v2:
-        project_src: /opt/docker
-        files: "{{ ['compose.yml'] + (service_files.files | map(attribute='path') | list) }}"
-        state: present
-        remove_orphans: yes
+        - name: Prune unused Docker images
+          community.docker.docker_prune:
+            images: yes
+            images_filters:
+              dangling: false
+          ignore_errors: yes
 
-    - name: Prune unused Docker images
-      community.docker.docker_prune:
-        images: yes
-        images_filters:
-          dangling: false
-      ignore_errors: yes
-
-    - name: Prune unused Docker volumes
-      community.docker.docker_prune:
-        volumes: yes
-      ignore_errors: yes
-
-  handlers:
-    - name: Restart Ops Agent
-      service:
-        name: google-cloud-ops-agent
-        state: restarted
-
-    - name: restart sslh
-      service:
-        name: sslh
-        state: restarted
-        enabled: yes
-
-    - name: Restart systemd-resolved
-      service:
-        name: systemd-resolved
-        state: restarted
-
-    - name: Restart Caddy
-      community.docker.docker_compose_v2:
-        project_src: /opt/docker
-        services:
-          - caddy
-        state: restarted
+        - name: Prune unused Docker volumes
+          community.docker.docker_prune:
+            volumes: yes
+          ignore_errors: yes

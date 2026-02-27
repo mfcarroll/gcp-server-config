@@ -68,29 +68,30 @@ jobs:
       - name: Checkout service repo
         uses: actions/checkout@v4
 
-      # 1. Install cloudflared (Official Way)
+      # 1. Install cloudflared (Lightning Fast Method)
       - name: Install cloudflared
         run: |
-          sudo mkdir -p --mode=0755 /usr/share/keyrings
-          curl -fsSL https://pkg.cloudflare.com/cloudflare-public-v2.gpg | sudo tee /usr/share/keyrings/cloudflare-public-v2.gpg >/dev/null
-          echo 'deb [signed-by=/usr/share/keyrings/cloudflare-public-v2.gpg] https://pkg.cloudflare.com/cloudflared any main' | sudo tee /etc/apt/sources.list.d/cloudflared.list
-          sudo apt-get update && sudo apt-get install -y cloudflared
+          # Skips the slow 'apt-get update' by grabbing the standalone binary directly (~1-2 seconds)
+          curl -sL -o cloudflared https://github.com/cloudflare/cloudflared/releases/latest/download/cloudflared-linux-amd64
+          chmod +x cloudflared
+          sudo mv cloudflared /usr/local/bin/
 
       # 2. Configure SSH globally for the runner
       - name: Configure SSH over Cloudflare Tunnel
         run: |
           mkdir -p ~/.ssh
 
-          # Save Private Key to file
           echo "${{ secrets.ANSIBLE_SSH_PRIVATE_KEY }}" > ~/.ssh/id_ed25519_gcp
           chmod 600 ~/.ssh/id_ed25519_gcp
 
-          # Create Config with IdentityFile and ProxyCommand
-          echo "Host ${{ secrets.SERVER_HOSTNAME }}" > ~/.ssh/config
-          echo "  IdentityFile ~/.ssh/id_ed25519_gcp" >> ~/.ssh/config
-          echo "  User dev" >> ~/.ssh/config
-          echo "  ProxyCommand /usr/bin/cloudflared access ssh --hostname %h" >> ~/.ssh/config
-          echo "  StrictHostKeyChecking no" >> ~/.ssh/config
+          # Write SSH config (Updated to match the binary install path)
+          cat << 'EOF' > ~/.ssh/config
+          Host ${{ secrets.SERVER_HOSTNAME }}
+            IdentityFile ~/.ssh/id_ed25519_gcp
+            User dev
+            ProxyCommand /usr/local/bin/cloudflared access ssh --hostname %h
+            StrictHostKeyChecking no
+          EOF
 
       - name: Check for compose file type
         id: check_files
@@ -154,7 +155,7 @@ jobs:
           restore-keys: |
             ${{ runner.os }}-pip-
 
-      # 6. Simplify Ansible (Uses system SSH automatically)
+      # 6. Simplify Ansible (Smart Execution)
       - name: Install Ansible and Run Playbook
         env:
           ANSIBLE_HOST_KEY_CHECKING: False
@@ -165,9 +166,20 @@ jobs:
           echo "[servers]" > ./ansible-config/inventory
           echo "app-server-1 ansible_host=${{ secrets.SERVER_HOSTNAME }} ansible_user=dev ansible_python_interpreter=/usr/bin/python3" >> ./ansible-config/inventory
 
-          # Run Playbook (No need for --private-key arg as it's in ~/.ssh/config now)
+          # SMART EXECUTION: Check if the proxy is already configured on the remote server
+          # If /etc/sslh.cfg exists, we assume infra is good and only run the 'deploy' tag.
+          if ssh ${{ secrets.SERVER_HOSTNAME }} "test -f /etc/sslh.cfg"; then
+            echo "Proxy is already configured. Running only the app deployment tasks..."
+            EXTRA_ARGS="--tags deploy"
+          else
+            echo "Server infrastructure missing. Running the FULL proxy & server setup..."
+            EXTRA_ARGS=""
+          fi
+
+          # Run Playbook
           ansible-playbook \
             -i ./ansible-config/inventory \
             ./ansible-config/playbook.yml \
+            $EXTRA_ARGS \
             --vault-password-file <(echo ${{ secrets.ANSIBLE_VAULT_PASSWORD }}) \
             --extra-vars "app_name=${{ env.APPNAME }} domain_name=${{ secrets.DOMAIN_NAME }}"
