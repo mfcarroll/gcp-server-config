@@ -200,10 +200,11 @@
       notify: restart sslh
 
     - name: Ensure sslh is enabled and running
-      service:
+      systemd:
         name: sslh
         state: started
         enabled: yes
+        daemon_reload: yes
 
     # --- DOCKER SETUP ---
     - name: Create directory for apt keyrings
@@ -322,6 +323,14 @@
         dest: /opt/docker/services/wireguard.yml
         mode: "0644"
 
+    # --- REMOVE APACHE IF INSTALLED ---
+
+    - name: Ensure default Apache is removed to free Port 80
+      apt:
+        name: ["apache2", "apache2-utils", "apache2-bin"]
+        state: absent
+        purge: yes
+
     # --- CI/CD APP DEPLOYMENT STEPS ---
 
     - name: CI/CD App Deployment Block
@@ -361,6 +370,7 @@
             files: "{{ ['compose.yml'] + (service_files.files | map(attribute='path') | list) }}"
             state: present
             remove_orphans: yes
+            build: policy
 
         - name: Prune unused Docker images
           community.docker.docker_prune:
@@ -373,3 +383,27 @@
           community.docker.docker_prune:
             volumes: yes
           ignore_errors: yes
+
+  handlers:
+    - name: Restart Ops Agent
+      service:
+        name: google-cloud-ops-agent
+        state: restarted
+
+    - name: restart sslh
+      service:
+        name: sslh
+        state: restarted
+        enabled: yes
+
+    - name: Restart systemd-resolved
+      service:
+        name: systemd-resolved
+        state: restarted
+
+    - name: Restart Caddy
+      community.docker.docker_compose_v2:
+        project_src: /opt/docker
+        services:
+          - caddy
+        state: restarted

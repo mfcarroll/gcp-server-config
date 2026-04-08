@@ -2,10 +2,11 @@
 # Individual application services are passed in by Ansible.
 services:
   caddy:
-    image: caddy:2-alpine
+    image: us-central1-docker.pkg.dev/{{ gcp_project_id }}/app-images/caddy-custom:latest
     restart: unless-stopped
     ports:
       - "80:80/tcp"
+      - "443:443/tcp"
     volumes:
       - /opt/docker/caddy/Caddyfile:/etc/caddy/Caddyfile
       - caddy_data:/data

@@ -1,5 +1,18 @@
+# 1. Domain Block: Gets the Let's Encrypt cert
+proxy.{{ domain_name }} {
+    respond "Forward Proxy is Online" 200
+}
+
+# 2. Proxy Block: Intercepts the traffic
+:443 {
+    forward_proxy {
+        basic_auth {{ proxy_user }} {{ proxy_pass }}
+        hide_ip
+        hide_via
+    }
+}
+
+# 3. Standard Apps: Safe and sound on Port 80 via the Tunnel
 http://*.{{ domain_name }} {
-    # Adjust `2` to match number of domain elements
-    # e.g. *.example.com -> label index 2 is "appname"
     reverse_proxy {http.request.host.labels.2}-app:80
 }
