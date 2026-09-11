@@ -372,16 +372,31 @@
             remove_orphans: yes
             build: policy
 
+        # Bringing the stack up saturates a small instance, and the control
+        # connection frequently does not survive it. Wait for SSH to come back
+        # before attempting cleanup, rather than failing the whole deploy on it.
+        - name: Wait for the control connection to recover
+          wait_for_connection:
+            delay: 10
+            timeout: 300
+          ignore_unreachable: yes
+          ignore_errors: yes
+
+        # These are cleanup, not deployment: they must never fail a deploy that
+        # has already succeeded. ignore_errors alone does not cover an
+        # unreachable host, which is exactly how this fails in practice.
         - name: Prune unused Docker images
           community.docker.docker_prune:
             images: yes
             images_filters:
               dangling: false
+          ignore_unreachable: yes
           ignore_errors: yes
 
         - name: Prune unused Docker volumes
           community.docker.docker_prune:
             volumes: yes
+          ignore_unreachable: yes
           ignore_errors: yes
 
   handlers:
