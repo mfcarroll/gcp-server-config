@@ -203,18 +203,33 @@ jobs:
         run: |
           URL="https://${{ secrets.DOMAIN_NAME }}/api/health"
           echo "Polling $URL"
-          for i in $(seq 1 60); do
+          # Sized from a measured deploy, not a guess. On 2026-09-14 the play
+          # handed off at 19:44:46, the container did not start until 19:51:12
+          # — six and a half minutes, mostly pulling the image onto a small
+          # instance — and the app answered around 19:52:40 after Deno spent
+          # ~70s loading before its first log line. A five-minute budget failed
+          # a deploy that was working, which is the same false failure in a new
+          # place. Fifteen minutes is roughly double the observed worst case;
+          # the cost of the ceiling being high is only paid when a deploy is
+          # genuinely broken.
+          for i in $(seq 1 180); do
             CODE=$(curl -s -o /dev/null -w '%{http_code}' --max-time 10 "$URL" || echo 000)
             if [ "$CODE" = "200" ]; then
               echo "✅ healthy after $((i * 5))s"
               exit 0
             fi
+            [ $((i % 12)) -eq 0 ] && echo "  still waiting ($((i * 5))s, last: $CODE)"
             sleep 5
           done
-          echo "::error::App did not return 200 from $URL within 5 minutes (last: $CODE)"
+          echo "::error::App did not return 200 from $URL within 15 minutes (last: $CODE)"
           exit 1
 
+      # Runs even when the health gate fails: pruning images and volumes is
+      # housekeeping the box needs most on a bad day, and skipping it let disk
+      # accumulate precisely when someone is already busy. It cannot fail the
+      # workflow either way.
       - name: Post-deploy cleanup
+        if: always()
         run: |
           # Cleanup, on a fresh connection, and never able to fail the deploy.
           # Bringing the stack up saturates a small instance and the control
