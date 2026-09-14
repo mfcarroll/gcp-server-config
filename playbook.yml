@@ -372,9 +372,18 @@
             remove_orphans: yes
             build: policy
 
+    # Cleanup, not deployment. Kept in its own tag so the workflow can run it as
+    # a separate ansible-playbook invocation whose exit code is discarded.
+    #
+    # Marking the tasks ignorable is not enough on its own: ansible-playbook
+    # exits 4 if ANY host was unreachable during the run, even when every task
+    # that hit it was ignored. So these tasks were already being skipped
+    # correctly while still turning a successful deploy red.
+    - name: Post-deploy cleanup
+      tags: ["cleanup"]
+      block:
         # Bringing the stack up saturates a small instance, and the control
-        # connection frequently does not survive it. Wait for SSH to come back
-        # before attempting cleanup, rather than failing the whole deploy on it.
+        # connection frequently does not survive it.
         - name: Wait for the control connection to recover
           wait_for_connection:
             delay: 10
@@ -382,9 +391,6 @@
           ignore_unreachable: yes
           ignore_errors: yes
 
-        # These are cleanup, not deployment: they must never fail a deploy that
-        # has already succeeded. ignore_errors alone does not cover an
-        # unreachable host, which is exactly how this fails in practice.
         - name: Prune unused Docker images
           community.docker.docker_prune:
             images: yes

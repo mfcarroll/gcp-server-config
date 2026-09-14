@@ -159,6 +159,11 @@ jobs:
       - name: Install Ansible and Run Playbook
         env:
           ANSIBLE_HOST_KEY_CHECKING: False
+          # Ansible looks for ansible.cfg in the working directory or
+          # $ANSIBLE_CONFIG — never beside the playbook. This repo is checked out
+          # into ./ansible-config, so without this its ssh keepalive settings
+          # were being loaded exactly never.
+          ANSIBLE_CONFIG: ./ansible-config/ansible.cfg
         run: |
           python3 -m pip install ansible
 
@@ -176,10 +181,24 @@ jobs:
             EXTRA_ARGS=""
           fi
 
-          # Run Playbook
+          # The deployment. This exit code is the verdict on the deploy.
           ansible-playbook \
             -i ./ansible-config/inventory \
             ./ansible-config/playbook.yml \
-            $EXTRA_ARGS \
+            $EXTRA_ARGS --skip-tags cleanup \
             --vault-password-file <(echo ${{ secrets.ANSIBLE_VAULT_PASSWORD }}) \
             --extra-vars "app_name=${{ env.APPNAME }} domain_name=${{ secrets.DOMAIN_NAME }}"
+
+          # Cleanup, on a fresh connection, and never able to fail the deploy.
+          # Bringing the stack up saturates a small instance and the control
+          # connection often does not survive it. ansible-playbook then exits 4
+          # for the unreachable host even when every task that hit it was
+          # ignored, which is how a deploy that had already succeeded kept being
+          # reported red. Discarding this exit code is the point.
+          ansible-playbook \
+            -i ./ansible-config/inventory \
+            ./ansible-config/playbook.yml \
+            --tags cleanup \
+            --vault-password-file <(echo ${{ secrets.ANSIBLE_VAULT_PASSWORD }}) \
+            --extra-vars "app_name=${{ env.APPNAME }} domain_name=${{ secrets.DOMAIN_NAME }}" \
+            || echo "::warning::Post-deploy cleanup did not complete. The deployment itself succeeded."
