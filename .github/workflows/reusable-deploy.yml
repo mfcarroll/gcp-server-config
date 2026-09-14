@@ -189,6 +189,33 @@ jobs:
             --vault-password-file <(echo ${{ secrets.ANSIBLE_VAULT_PASSWORD }}) \
             --extra-vars "app_name=${{ env.APPNAME }} domain_name=${{ secrets.DOMAIN_NAME }}"
 
+          echo "Deployment handed off. The stack comes up on the host."
+
+      # Whether the app is serving, asked over HTTP from here.
+      #
+      # This needs no ssh, so the connection dropping while the instance is
+      # saturated cannot make a working deploy look broken — which is what kept
+      # happening. It also tests the thing that actually matters instead of
+      # Ansible's ability to reconnect: /api/health is a real route, and /api/*
+      # returns 404 rather than falling through to the SPA, so a 200 here means
+      # the container is genuinely serving.
+      - name: Wait for the app to come back
+        run: |
+          URL="https://${{ secrets.DOMAIN_NAME }}/api/health"
+          echo "Polling $URL"
+          for i in $(seq 1 60); do
+            CODE=$(curl -s -o /dev/null -w '%{http_code}' --max-time 10 "$URL" || echo 000)
+            if [ "$CODE" = "200" ]; then
+              echo "✅ healthy after $((i * 5))s"
+              exit 0
+            fi
+            sleep 5
+          done
+          echo "::error::App did not return 200 from $URL within 5 minutes (last: $CODE)"
+          exit 1
+
+      - name: Post-deploy cleanup
+        run: |
           # Cleanup, on a fresh connection, and never able to fail the deploy.
           # Bringing the stack up saturates a small instance and the control
           # connection often does not survive it. ansible-playbook then exits 4
