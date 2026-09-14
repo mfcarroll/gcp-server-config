@@ -385,18 +385,24 @@
           poll: 0
           register: compose_job
 
-        - name: Wait for the control connection to survive the stack coming up
-          wait_for_connection:
-            delay: 5
-            timeout: 300
-
-        - name: Wait for the stack to finish coming up
-          async_status:
-            jid: "{{ compose_job.ansible_job_id }}"
-          register: compose_result
-          until: compose_result.finished
-          retries: 60
-          delay: 10
+        # Deliberately the last thing this play does.
+        #
+        # Polling the job from here means holding a connection open through
+        # exactly the window that kills it. `until`/`retries` do not help: an
+        # UNREACHABLE result is fatal in Ansible regardless of them, so the play
+        # aborted on the poll even though the stack was coming up fine —
+        # ok=7 changed=4 unreachable=1, and a container already on its way up.
+        #
+        # Whether the app is actually serving is now checked over HTTP from the
+        # runner, which needs no ssh at all and tests the thing we care about
+        # rather than whether Ansible could reconnect. The job's own result is
+        # collected in the cleanup pass, where being unable to reach the host
+        # costs nothing.
+        - name: Record the async job id for the cleanup pass
+          copy:
+            content: "{{ compose_job.ansible_job_id }}"
+            dest: /home/dev/.last_compose_job
+            mode: "0644"
 
     # Cleanup, not deployment. Kept in its own tag so the workflow can run it as
     # a separate ansible-playbook invocation whose exit code is discarded.
@@ -414,6 +420,18 @@
           wait_for_connection:
             delay: 10
             timeout: 300
+          ignore_unreachable: yes
+          ignore_errors: yes
+
+        # Best effort, for the log. The health check in the workflow has
+        # already decided whether the deploy worked.
+        - name: Read the result of the stack-up
+          async_status:
+            jid: "{{ lookup('file', '/home/dev/.last_compose_job') }}"
+          register: compose_result
+          until: compose_result.finished
+          retries: 30
+          delay: 10
           ignore_unreachable: yes
           ignore_errors: yes
 
