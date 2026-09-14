@@ -364,6 +364,16 @@
             state: absent
           when: app_name is defined
 
+        # Detached, deliberately.
+        #
+        # Bringing the stack up saturates a small instance and the control
+        # connection frequently does not survive it. Held open, a drop here
+        # aborts the play mid-step: on 2026-09-14 that left the old container
+        # stopped and the new one *created but never started*, so the site
+        # served 502 until someone started it by hand.
+        #
+        # Run detached and the work finishes on the host whether or not ssh
+        # lives. The poll below reconnects and collects the result.
         - name: Run all services with Docker Compose
           community.docker.docker_compose_v2:
             project_src: /opt/docker
@@ -371,6 +381,22 @@
             state: present
             remove_orphans: yes
             build: policy
+          async: 900
+          poll: 0
+          register: compose_job
+
+        - name: Wait for the control connection to survive the stack coming up
+          wait_for_connection:
+            delay: 5
+            timeout: 300
+
+        - name: Wait for the stack to finish coming up
+          async_status:
+            jid: "{{ compose_job.ansible_job_id }}"
+          register: compose_result
+          until: compose_result.finished
+          retries: 60
+          delay: 10
 
     # Cleanup, not deployment. Kept in its own tag so the workflow can run it as
     # a separate ansible-playbook invocation whose exit code is discarded.
