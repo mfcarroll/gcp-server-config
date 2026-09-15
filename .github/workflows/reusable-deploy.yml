@@ -10,6 +10,16 @@ on:
         required: false
         type: string
         default: "[]"
+      health_path:
+        description: >-
+          Path polled on https://<appname>.<DOMAIN_NAME> to decide the deploy
+          worked. Defaults to "/", which is enough: when the container is down
+          Caddy answers 502 for every path, so the root distinguishes up from
+          down without assuming the app has a health route. Override only to
+          check something more specific.
+        required: false
+        type: string
+        default: "/"
     secrets:
       SERVER_HOSTNAME:
         required: true
@@ -201,7 +211,11 @@ jobs:
       # the container is genuinely serving.
       - name: Wait for the app to come back
         run: |
-          URL="https://${{ secrets.DOMAIN_NAME }}/api/health"
+          # <appname>.<domain>, not the bare domain. DOMAIN_NAME is the apex —
+          # apps live on subdomains of it — so polling it directly reaches a
+          # different site entirely. That answered 404 for fifteen minutes and
+          # failed a deploy whose app was serving perfectly the whole time.
+          URL="https://${{ env.APPNAME }}.${{ secrets.DOMAIN_NAME }}${{ inputs.health_path }}"
           echo "Polling $URL"
           # Sized from a measured deploy, not a guess. On 2026-09-14 the play
           # handed off at 19:44:46, the container did not start until 19:51:12
