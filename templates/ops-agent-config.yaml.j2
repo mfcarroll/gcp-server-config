@@ -31,3 +31,12 @@ logging:
       default_pipeline:
         receivers: [docker_logs]
         processors: [parse_docker_wrapper, parse_app_json, move_severity]
+
+# No host metrics: nobody reads them, and their collector (otelopscol) held
+# ~57 MB on a 1 GB box. An empty receiver list is Google's documented way to
+# turn the default metrics pipeline off; logging above is unaffected.
+metrics:
+  service:
+    pipelines:
+      default_pipeline:
+        receivers: []
