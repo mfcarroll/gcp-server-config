@@ -299,12 +299,22 @@
       changed_when: false
 
     # --- CONFIG FILES ---
+    # Tagged deploy too, so a change here reaches the server through any app's
+    # deploy rather than waiting for a full run by hand. Unchanged, it is a
+    # file comparison and the agent is not restarted.
     - name: Configure Google Cloud Ops Agent
+      tags: ["deploy"]
       template:
         src: templates/ops-agent-config.yaml.j2
         dest: /etc/google-cloud-ops-agent/config.yaml
         mode: "0644"
       notify: Restart Ops Agent
+
+    # Now, not at the end of the play: handlers otherwise run after the stack
+    # is launched, and an agent restart then lands on the box's busiest moment.
+    - name: Apply an Ops Agent change before the deploy starts
+      tags: ["deploy"]
+      meta: flush_handlers
 
     - name: Copy Caddyfile to server
       template:
@@ -346,8 +356,17 @@
             remote_src: yes
           when: app_name is defined
 
+        # Once, not on every deploy. gcloud is a heavy Python program, and on
+        # 2 Oct it was the step running when a 1 GB box ran out of memory
+        # mid-deploy (old app still up, swap already full from the deploy
+        # before). It only writes a credential helper into Docker's config,
+        # which stays put.
         - name: Configure Docker to use Google Cloud credentials
-          command: gcloud auth configure-docker us-central1-docker.pkg.dev --quiet
+          shell: >
+            grep -q '"us-central1-docker.pkg.dev"' /root/.docker/config.json 2>/dev/null
+            || gcloud auth configure-docker us-central1-docker.pkg.dev --quiet
+          register: docker_auth
+          changed_when: "'Adding credentials' in docker_auth.stderr"
 
         - name: Find all individual service compose files
           find:
