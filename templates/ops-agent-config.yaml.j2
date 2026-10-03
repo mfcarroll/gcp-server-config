@@ -1,3 +1,9 @@
+# The agent's own log files, shipped to Cloud Logging as ops-agent-fluent-bit,
+# were ~40% of the agent's log volume (2 Oct) and nobody reads them. Its
+# health checks (ops-agent-health) are separate and stay.
+global:
+  default_self_log_file_collection: false
+
 logging:
   receivers:
     docker_logs:
