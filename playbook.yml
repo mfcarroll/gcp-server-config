@@ -374,6 +374,41 @@
             patterns: "*.yml"
           register: service_files
 
+        # A safety net, armed before the old app is stopped.
+        #
+        # The stop below holds the control connection open, and on 2026-10-03
+        # it did not survive: the box was starved enough that Google's guest
+        # agent failed its health checks, restarted, and reloaded the network,
+        # dropping every connection. The play died between stopping the old
+        # app and starting the new one, and the site served 502 until the
+        # deploy was re-run by hand.
+        #
+        # This runs on the host, so it does not care whether ssh lives. Five
+        # minutes on, once no Ansible or Compose work is still going, it starts
+        # the stack if the app is not running. On a deploy that went fine it
+        # finds the app up and does nothing.
+        #
+        # No "$" in the script: systemd expands it in the command it runs. The
+        # brackets in the pgrep pattern keep it from matching this script's own
+        # command line.
+        - name: Arm a watchdog that starts the app if the deploy is cut off
+          shell: >
+            systemctl stop deploy-watchdog-{{ app_name }}.timer deploy-watchdog-{{ app_name }}.service 2>/dev/null;
+            systemctl reset-failed deploy-watchdog-{{ app_name }}.service 2>/dev/null;
+            systemd-run --unit=deploy-watchdog-{{ app_name }} --on-active=300 --collect
+            /bin/sh -c '{{ watchdog_script }}'
+          vars:
+            compose_cmd: >-
+              docker compose --project-directory /opt/docker
+              -f /opt/docker/compose.yml
+              {{ service_files.files | map(attribute='path') | map('regex_replace', '^', '-f ') | join(' ') }}
+            watchdog_script: >-
+              while pgrep -f "[A]nsiballZ|[a]sync_wrapper|cli-plugins/[d]ocker-compose" >/dev/null; do sleep 15; done;
+              {{ compose_cmd }} ps --status running -q {{ app_name }}-app | grep -q .
+              || { echo "{{ app_name }}-app is not running after the deploy, starting the stack";
+              {{ compose_cmd }} up -d --remove-orphans; }
+          when: app_name is defined
+
         - name: Stop old application instance to free memory
           community.docker.docker_compose_v2:
             project_src: /opt/docker
