@@ -310,6 +310,19 @@
         mode: "0644"
       notify: Restart Ops Agent
 
+    # With no metrics pipeline the collector still starts, for the agent's own
+    # health reporting: still running here on 6 Oct, and it held 40-126 MB on
+    # the Zoom bot's identical 1 GB box (3 Oct). Logs go through fluent-bit, a
+    # separate subagent, so stopping it costs only that self-reporting. The
+    # same as zoom-automation's playbook.
+    - name: Keep the Ops Agent's metrics collector off
+      tags: ["deploy"]
+      ansible.builtin.systemd:
+        name: google-cloud-ops-agent-opentelemetry-collector
+        state: stopped
+        enabled: false
+        masked: true
+
     # Now, not at the end of the play: handlers otherwise run after the stack
     # is launched, and an agent restart then lands on the box's busiest moment.
     - name: Apply an Ops Agent change before the deploy starts
