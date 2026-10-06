@@ -40,7 +40,8 @@ logging:
 
 # No host metrics: nobody reads them, and their collector (otelopscol) held
 # ~57 MB on a 1 GB box. An empty receiver list is Google's documented way to
-# turn the default metrics pipeline off; logging above is unaffected.
+# turn the default metrics pipeline off; logging above is unaffected. That
+# alone leaves the collector running, so the playbook also masks it.
 metrics:
   service:
     pipelines:
